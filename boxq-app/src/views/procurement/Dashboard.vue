@@ -100,8 +100,10 @@ export default {
                     </thead>
                     <tbody>
                         <tr v-for="req in requisitions" :key="req.id">
-                            <td class="ps-4 font-monospace text-muted small">
-                                #{{ String(req.id).slice(-6).toUpperCase() }}
+                            <td class="ps-4 font-monospace small">
+                                <RouterLink :to="`/requisition/${req.id}`" class="text-decoration-none fw-bold">
+                                    #{{ String(req.id).slice(-6).toUpperCase() }}
+                                </RouterLink>
                             </td>
                             <td class="fw-bold text-dark">{{ req.requester }}</td>
                             <td><span class="badge bg-light text-dark border">{{ req.department }}</span></td>

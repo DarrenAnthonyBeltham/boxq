@@ -17,5 +17,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/requisitions', [RequisitionController::class, 'index']);
     Route::post('/requisitions', [RequisitionController::class, 'store']);
+    Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
 });

@@ -4,6 +4,7 @@ const Login = () => import('../views/auth/Login.vue');
 const Register = () => import('../views/auth/Register.vue');
 const Dashboard = () => import('../views/procurement/Dashboard.vue');
 const CreateRequest = () => import('../views/procurement/RequisitionCreate.vue');
+const RequisitionDetail = () => import('../views/procurement/RequisitionDetail.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -30,6 +31,12 @@ const router = createRouter({
       path: '/create', 
       name: 'create', 
       component: CreateRequest,
+      meta: { requiresAuth: true }
+    },
+    { 
+      path: '/requisition/:id', 
+      name: 'requisition-detail', 
+      component: RequisitionDetail,
       meta: { requiresAuth: true }
     }
   ]

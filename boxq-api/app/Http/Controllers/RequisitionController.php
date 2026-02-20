@@ -60,6 +60,22 @@ class RequisitionController extends Controller
         return response()->json($requisition, 201);
     }
 
+    public function show(Request $request, $id)
+    {
+        $requisition = Requisition::findOrFail($id);
+        $user = $request->user();
+
+        if ($user->role === 'employee' && $requisition->user_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if ($user->role === 'manager' && $requisition->department !== $user->department) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        return response()->json($requisition);
+    }
+
     public function updateStatus(Request $request, $id)
     {
         $user = $request->user();
