@@ -18,11 +18,17 @@ class User extends Authenticatable
         'email',
         'password',
         'department',
-        'role', 
+        'role',
+        'avatar',
+        'preferences',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+    ];
+
+    protected $casts = [
+        'preferences' => 'array',
     ];
 }

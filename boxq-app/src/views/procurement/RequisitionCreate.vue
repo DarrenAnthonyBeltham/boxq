@@ -1,21 +1,30 @@
 <script setup lang="ts">
-import { reactive, computed } from 'vue';
-import api from '../../services/api';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 
 const router = useRouter();
 
+const currentUser = ref({
+    name: 'Loading...',
+    department: 'Loading...'
+});
+
 const form = reactive({
-    requester: 'Darren Beltham',
-    department: 'Engineering',
+    justification: '',
     items: [
         { name: '', price: 0, qty: 1 }
     ]
 });
 
-const grandTotal = computed(() => {
-    return form.items.reduce((sum, item) => sum + (item.price * item.qty), 0);
+onMounted(() => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+        const user = JSON.parse(userData);
+        currentUser.value.name = user.name;
+        currentUser.value.department = user.department;
+    }
 });
 
 const addItem = () => {
@@ -28,120 +37,128 @@ const removeItem = (index: number) => {
     }
 };
 
-const submitForm = async () => {
+const totalEstimatedCost = computed(() => {
+    return form.items.reduce((total, item) => total + (item.price * item.qty), 0);
+});
+
+const isSubmitting = ref(false);
+
+const submitRequest = async () => {
+    isSubmitting.value = true;
     try {
-        const payload = {
-            ...form,
-            total_price: grandTotal.value
-        };
-        await api.post('/requisitions', payload);
+        await api.post('/requisitions', {
+            justification: form.justification,
+            items: form.items
+        });
         router.push('/');
     } catch (error) {
-        alert("Failed to submit request.");
+        alert("Failed to submit request. Please ensure you provided a justification.");
+        console.error(error);
+    } finally {
+        isSubmitting.value = false;
     }
 };
 </script>
 
 <script lang="ts">
 export default {
-    name: 'RequisitionCreate'
+    name: 'RequisitionCreateView'
 }
 </script>
 
 <template>
     <MainLayout>
-        <div class="d-flex align-items-center mb-4">
-            <RouterLink to="/" class="btn btn-outline-secondary me-3 btn-sm">
+        <div class="mb-4 d-flex align-items-center gap-3">
+            <button @click="router.push('/')" class="btn btn-outline-secondary">
                 <i class="fa-solid fa-arrow-left"></i>
-            </RouterLink>
+            </button>
             <div>
-                <h3 class="fw-bold mb-0">Create Request</h3>
+                <h3 class="fw-bold text-dark mb-0">Create Request</h3>
                 <p class="text-muted mb-0 small">Submit a new purchase requisition for approval.</p>
             </div>
         </div>
 
-        <div class="row">
-            <div class="col-lg-8">
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-body p-4">
-                        <form @submit.prevent="submitForm">
-                            <h6 class="text-uppercase text-secondary fw-bold small mb-3">General Information</h6>
-                            <div class="row g-3 mb-4">
-                                <div class="col-md-6">
-                                    <label class="form-label small fw-bold">Requester Name</label>
-                                    <input v-model="form.requester" class="form-control bg-light" readonly>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small fw-bold">Department</label>
-                                    <select v-model="form.department" class="form-select">
-                                        <option>Engineering</option>
-                                        <option>Marketing</option>
-                                        <option>Finance</option>
-                                        <option>HR</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="d-flex justify-content-between align-items-center mb-3 pt-3 border-top">
-                                <h6 class="text-uppercase text-secondary fw-bold small mb-0">Line Items</h6>
-                                <button type="button" @click="addItem" class="btn btn-sm btn-outline-primary">
-                                    <i class="fa-solid fa-plus me-1"></i> Add Item
-                                </button>
-                            </div>
-
-                            <div class="table-responsive mb-4">
-                                <table class="table table-bordered align-middle">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th style="width: 45%">Description</th>
-                                            <th style="width: 20%">Price ($)</th>
-                                            <th style="width: 15%">Qty</th>
-                                            <th>Total</th>
-                                            <th></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr v-for="(item, index) in form.items" :key="index">
-                                            <td><input v-model="item.name" class="form-control form-control-sm" placeholder="Item name" required></td>
-                                            <td><input v-model="item.price" type="number" step="0.01" class="form-control form-control-sm" required></td>
-                                            <td><input v-model="item.qty" type="number" min="1" class="form-control form-control-sm" required></td>
-                                            <td class="fw-bold text-end">${{ (item.price * item.qty).toFixed(2) }}</td>
-                                            <td class="text-center">
-                                                <button type="button" @click="removeItem(index)" class="btn btn-link text-danger p-0">
-                                                    <i class="fa-solid fa-trash-can"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <div class="bg-light p-3 rounded d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="text-muted small d-block">Total Estimated Cost</span>
-                                    <span class="h4 fw-bold text-dark mb-0">${{ grandTotal.toFixed(2) }}</span>
-                                </div>
-                                <button type="submit" class="btn btn-dark px-4">
-                                    Submit Request <i class="fa-solid fa-paper-plane ms-2"></i>
-                                </button>
-                            </div>
-                        </form>
+        <div class="card border-0 shadow-sm p-4">
+            <form @submit.prevent="submitRequest">
+                <h6 class="text-uppercase text-muted small fw-bold mb-3">General Information</h6>
+                <div class="row mb-4">
+                    <div class="col-md-6 mb-3 mb-md-0">
+                        <label class="form-label small fw-bold text-secondary">Requester Name</label>
+                        <input :value="currentUser.name" type="text" class="form-control bg-light text-muted" disabled>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold text-secondary">Department</label>
+                        <input :value="currentUser.department" type="text" class="form-control bg-light text-muted" disabled>
                     </div>
                 </div>
-            </div>
-            
-            <div class="col-lg-4">
-                <div class="card bg-info bg-opacity-10 border-info border-opacity-25 shadow-sm">
-                    <div class="card-body">
-                        <h6 class="fw-bold text-info-emphasis"><i class="fa-solid fa-circle-info me-2"></i>Guidelines</h6>
-                        <ul class="small text-secondary ps-3 mb-0">
-                            <li class="mb-1">Requests under $500 are auto-approved.</li>
-                            <li class="mb-1">Hardware requests require IT manager approval.</li>
-                            <li>Please attach vendor quotes for items over $1,000.</li>
-                        </ul>
-                    </div>
+
+                <div class="mb-5">
+                    <label class="form-label small fw-bold text-secondary">Business Justification</label>
+                    <textarea v-model="form.justification" class="form-control" rows="3" placeholder="Explain why this purchase is necessary for your role or department..." required minlength="10"></textarea>
+                    <div class="form-text small text-muted">Please provide at least a brief sentence explaining the need.</div>
                 </div>
-            </div>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="text-uppercase text-muted small fw-bold mb-0">Line Items</h6>
+                    <button type="button" @click="addItem" class="btn btn-sm btn-outline-primary">
+                        <i class="fa-solid fa-plus me-1"></i>Add Item
+                    </button>
+                </div>
+
+                <div class="table-responsive mb-4">
+                    <table class="table table-bordered align-middle mb-0">
+                        <thead class="bg-light">
+                            <tr>
+                                <th class="small text-secondary">Description</th>
+                                <th class="small text-secondary" style="width: 150px;">Price ($)</th>
+                                <th class="small text-secondary" style="width: 120px;">Qty</th>
+                                <th class="small text-secondary text-end" style="width: 120px;">Total</th>
+                                <th style="width: 50px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(item, index) in form.items" :key="index">
+                                <td class="p-0">
+                                    <input v-model="item.name" type="text" class="form-control border-0 rounded-0 px-3 py-2" placeholder="Item name" required>
+                                </td>
+                                <td class="p-0">
+                                    <input v-model.number="item.price" type="number" step="0.01" min="0" class="form-control border-0 rounded-0 px-3 py-2" required>
+                                </td>
+                                <td class="p-0">
+                                    <input v-model.number="item.qty" type="number" min="1" class="form-control border-0 rounded-0 px-3 py-2" required>
+                                </td>
+                                <td class="text-end fw-bold px-3">
+                                    ${{ (item.price * item.qty).toFixed(2) }}
+                                </td>
+                                <td class="text-center p-0">
+                                    <button type="button" @click="removeItem(index)" class="btn btn-sm btn-link text-danger" :disabled="form.items.length === 1">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="bg-light p-4 rounded d-flex flex-column flex-md-row justify-content-between align-items-center mt-4">
+                    <div class="mb-3 mb-md-0 text-center text-md-start">
+                        <span class="text-muted small d-block">Total Estimated Cost</span>
+                        <h4 class="fw-bold mb-0">${{ totalEstimatedCost.toFixed(2) }}</h4>
+                    </div>
+                    <button type="submit" class="btn btn-dark px-4 py-2 fw-medium" :disabled="isSubmitting">
+                        <span v-if="isSubmitting" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <i v-else class="fa-solid fa-paper-plane me-2"></i>
+                        {{ isSubmitting ? 'Submitting...' : 'Submit Request' }}
+                    </button>
+                </div>
+            </form>
         </div>
     </MainLayout>
 </template>
+
+<style scoped>
+.table .form-control:focus {
+    box-shadow: none;
+    background-color: #f8f9fa;
+}
+</style>

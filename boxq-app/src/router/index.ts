@@ -5,6 +5,7 @@ const Register = () => import('../views/auth/Register.vue');
 const Dashboard = () => import('../views/procurement/Dashboard.vue');
 const CreateRequest = () => import('../views/procurement/RequisitionCreate.vue');
 const RequisitionDetail = () => import('../views/procurement/RequisitionDetail.vue');
+const Profile = () => import('../views/settings/Profile.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -37,6 +38,12 @@ const router = createRouter({
       path: '/requisition/:id', 
       name: 'requisition-detail', 
       component: RequisitionDetail,
+      meta: { requiresAuth: true }
+    },
+    { 
+      path: '/profile', 
+      name: 'profile', 
+      component: Profile,
       meta: { requiresAuth: true }
     }
   ]

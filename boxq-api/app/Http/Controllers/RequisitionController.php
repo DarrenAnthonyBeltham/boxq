@@ -38,6 +38,7 @@ class RequisitionController extends Controller
         $user = $request->user();
 
         $validated = $request->validate([
+            'justification' => 'required|string|min:10|max:1000',
             'items' => 'required|array|min:1',
             'items.*.name' => 'required|string',
             'items.*.price' => 'required|numeric|min:0',
@@ -52,6 +53,7 @@ class RequisitionController extends Controller
             'user_id' => $user->id,
             'requester' => $user->name,
             'department' => $user->department,
+            'justification' => $validated['justification'],
             'items' => $validated['items'],
             'total_price' => $totalPrice,
             'status' => 'Pending',
@@ -81,7 +83,8 @@ class RequisitionController extends Controller
         $user = $request->user();
         
         $validated = $request->validate([
-            'status' => 'required|string|in:Approved,Rejected,Paid'
+            'status' => 'required|string|in:Approved,Rejected,Paid',
+            'reason' => 'nullable|string|max:500'
         ]);
 
         $requisition = Requisition::findOrFail($id);
@@ -95,6 +98,11 @@ class RequisitionController extends Controller
         }
 
         $requisition->status = $validated['status'];
+        
+        if (isset($validated['reason'])) {
+            $requisition->reason = $validated['reason'];
+        }
+
         $requisition->save();
 
         return response()->json($requisition);

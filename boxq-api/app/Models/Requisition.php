@@ -10,16 +10,17 @@ class Requisition extends Model
     protected $collection = 'requisitions';
 
     protected $fillable = [
-        'requester', 
-        'department', 
-        'items', 
-        'total_price', 
+        'user_id',
+        'requester',
+        'department',
+        'justification',
+        'items',
+        'total_price',
         'status',
-        'created_at'
+        'reason',
     ];
 
     protected $casts = [
         'items' => 'array',
-        'created_at' => 'datetime'
     ];
 }
