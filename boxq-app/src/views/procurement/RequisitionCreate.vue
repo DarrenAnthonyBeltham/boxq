@@ -25,7 +25,7 @@ const products = ref<Product[]>([]);
 const form = reactive({
     justification: '',
     items: [
-        { productId: '', name: '', price: 0, qty: 1 }
+        { productId: '', name: '', price: 0, qty: 1, isCustom: false }
     ]
 });
 
@@ -49,6 +49,14 @@ const handleProductSelect = (index: number) => {
     const item = form.items[index];
     if (!item) return;
 
+    if (item.productId === 'custom') {
+        item.isCustom = true;
+        item.name = '';
+        item.price = 0;
+        return;
+    }
+
+    item.isCustom = false;
     const product = products.value.find(p => p._id === item.productId || p.id === item.productId);
     
     if (product) {
@@ -58,7 +66,7 @@ const handleProductSelect = (index: number) => {
 };
 
 const addItem = () => {
-    form.items.push({ productId: '', name: '', price: 0, qty: 1 });
+    form.items.push({ productId: '', name: '', price: 0, qty: 1, isCustom: false });
 };
 
 const removeItem = (index: number) => {
@@ -146,8 +154,7 @@ export default {
 
                 <div class="mb-5">
                     <label class="form-label small fw-bold text-secondary">Business Justification</label>
-                    <textarea v-model="form.justification" class="form-control" rows="3" placeholder="Explain why this purchase is necessary for your role or department..." required minlength="10"></textarea>
-                    <div class="form-text small text-muted">Please provide at least a brief sentence explaining the need.</div>
+                    <textarea v-model="form.justification" class="form-control" rows="3" placeholder="Explain why this purchase is necessary... If requesting a custom item, provide the vendor link here." required minlength="10"></textarea>
                 </div>
 
                 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -171,15 +178,19 @@ export default {
                         <tbody>
                             <tr v-for="(item, index) in form.items" :key="index">
                                 <td class="p-0">
-                                    <select v-model="item.productId" @change="handleProductSelect(index)" class="form-select border-0 rounded-0 px-3 py-2" required>
-                                        <option value="" disabled>Select an item...</option>
-                                        <option v-for="product in products" :key="product._id || product.id" :value="product._id || product.id">
-                                            {{ product.name }} ({{ product.sku }})
-                                        </option>
-                                    </select>
+                                    <div class="d-flex flex-column">
+                                        <select v-model="item.productId" @change="handleProductSelect(index)" class="form-select border-0 rounded-0 px-3 py-2" required>
+                                            <option value="" disabled>Select an item...</option>
+                                            <option class="fw-bold text-primary" value="custom">+ Request Custom Item (Not in Catalog)</option>
+                                            <option v-for="product in products" :key="product._id || product.id" :value="product._id || product.id">
+                                                {{ product.name }} ({{ product.sku }})
+                                            </option>
+                                        </select>
+                                        <input v-if="item.isCustom" v-model="item.name" type="text" class="form-control border-top border-0 rounded-0 px-3 py-2 bg-light text-primary" placeholder="Type custom item name..." required>
+                                    </div>
                                 </td>
-                                <td class="p-0 bg-light">
-                                    <input :value="item.price" type="number" class="form-control border-0 rounded-0 px-3 py-2 bg-transparent text-muted" readonly required>
+                                <td class="p-0" :class="{ 'bg-light': !item.isCustom }">
+                                    <input v-model.number="item.price" type="number" step="0.01" min="0" class="form-control border-0 rounded-0 px-3 py-2" :class="{ 'bg-transparent text-muted': !item.isCustom }" :readonly="!item.isCustom" required>
                                 </td>
                                 <td class="p-0">
                                     <input v-model.number="item.qty" type="number" min="1" class="form-control border-0 rounded-0 px-3 py-2" required>
@@ -197,12 +208,12 @@ export default {
                     </table>
                 </div>
 
-                <div class="bg-light p-4 rounded d-flex flex-column flex-md-row justify-content-between align-items-center mt-4">
+                <div class="bg-light p-4 rounded d-flex flex-column flex-md-row justify-content-between align-items-center mt-4 border">
                     <div class="mb-3 mb-md-0 text-center text-md-start">
-                        <span class="text-muted small d-block">Total Estimated Cost</span>
-                        <h4 class="fw-bold mb-0">${{ totalEstimatedCost.toFixed(2) }}</h4>
+                        <span class="text-muted small d-block text-uppercase fw-bold">Total Estimated Cost</span>
+                        <h4 class="fw-bold text-dark mb-0">${{ totalEstimatedCost.toFixed(2) }}</h4>
                     </div>
-                    <button type="submit" class="btn btn-dark px-4 py-2 fw-medium" :disabled="isSubmitting">
+                    <button type="submit" class="btn btn-primary px-4 py-2 fw-bold" :disabled="isSubmitting">
                         <span v-if="isSubmitting" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                         <i v-else class="fa-solid fa-paper-plane me-2"></i>
                         {{ isSubmitting ? 'Submitting...' : 'Submit Request' }}
