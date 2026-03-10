@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import axios from 'axios';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
+
+interface Product {
+    _id?: string;
+    id?: string;
+    name: string;
+    sku: string;
+    price: number;
+}
 
 const router = useRouter();
 
@@ -11,24 +20,45 @@ const currentUser = ref({
     department: 'Loading...'
 });
 
+const products = ref<Product[]>([]);
+
 const form = reactive({
     justification: '',
     items: [
-        { name: '', price: 0, qty: 1 }
+        { productId: '', name: '', price: 0, qty: 1 }
     ]
 });
 
-onMounted(() => {
+onMounted(async () => {
     const userData = localStorage.getItem('user');
     if (userData) {
         const user = JSON.parse(userData);
         currentUser.value.name = user.name;
         currentUser.value.department = user.department;
     }
+
+    try {
+        const response = await api.get('/products');
+        products.value = response.data;
+    } catch (error) {
+        console.error(error);
+    }
 });
 
+const handleProductSelect = (index: number) => {
+    const item = form.items[index];
+    if (!item) return;
+
+    const product = products.value.find(p => p._id === item.productId || p.id === item.productId);
+    
+    if (product) {
+        item.name = product.name;
+        item.price = product.price;
+    }
+};
+
 const addItem = () => {
-    form.items.push({ name: '', price: 0, qty: 1 });
+    form.items.push({ productId: '', name: '', price: 0, qty: 1 });
 };
 
 const removeItem = (index: number) => {
@@ -42,18 +72,36 @@ const totalEstimatedCost = computed(() => {
 });
 
 const isSubmitting = ref(false);
+const errorMessage = ref('');
 
 const submitRequest = async () => {
     isSubmitting.value = true;
+    errorMessage.value = '';
+    
     try {
+        const payloadItems = form.items.map(item => ({
+            name: item.name,
+            price: item.price,
+            qty: item.qty
+        }));
+
         await api.post('/requisitions', {
             justification: form.justification,
-            items: form.items
+            items: payloadItems
         });
         router.push('/');
     } catch (error) {
-        alert("Failed to submit request. Please ensure you provided a justification.");
-        console.error(error);
+        if (axios.isAxiosError(error) && error.response) {
+            if (error.response.status === 401) {
+                errorMessage.value = "Session expired. Please log out and log back in.";
+            } else if (error.response.status === 422) {
+                errorMessage.value = "Validation Error: Please check all fields.";
+            } else {
+                errorMessage.value = "Server error occurred. Could not submit.";
+            }
+        } else {
+            errorMessage.value = "An unexpected error occurred.";
+        }
     } finally {
         isSubmitting.value = false;
     }
@@ -76,6 +124,10 @@ export default {
                 <h3 class="fw-bold text-dark mb-0">Create Request</h3>
                 <p class="text-muted mb-0 small">Submit a new purchase requisition for approval.</p>
             </div>
+        </div>
+
+        <div v-if="errorMessage" class="alert alert-danger shadow-sm py-2 mb-4">
+            <i class="fa-solid fa-circle-exclamation me-2"></i>{{ errorMessage }}
         </div>
 
         <div class="card border-0 shadow-sm p-4">
@@ -109,7 +161,7 @@ export default {
                     <table class="table table-bordered align-middle mb-0">
                         <thead class="bg-light">
                             <tr>
-                                <th class="small text-secondary">Description</th>
+                                <th class="small text-secondary">Catalog Item</th>
                                 <th class="small text-secondary" style="width: 150px;">Price ($)</th>
                                 <th class="small text-secondary" style="width: 120px;">Qty</th>
                                 <th class="small text-secondary text-end" style="width: 120px;">Total</th>
@@ -119,10 +171,15 @@ export default {
                         <tbody>
                             <tr v-for="(item, index) in form.items" :key="index">
                                 <td class="p-0">
-                                    <input v-model="item.name" type="text" class="form-control border-0 rounded-0 px-3 py-2" placeholder="Item name" required>
+                                    <select v-model="item.productId" @change="handleProductSelect(index)" class="form-select border-0 rounded-0 px-3 py-2" required>
+                                        <option value="" disabled>Select an item...</option>
+                                        <option v-for="product in products" :key="product._id || product.id" :value="product._id || product.id">
+                                            {{ product.name }} ({{ product.sku }})
+                                        </option>
+                                    </select>
                                 </td>
-                                <td class="p-0">
-                                    <input v-model.number="item.price" type="number" step="0.01" min="0" class="form-control border-0 rounded-0 px-3 py-2" required>
+                                <td class="p-0 bg-light">
+                                    <input :value="item.price" type="number" class="form-control border-0 rounded-0 px-3 py-2 bg-transparent text-muted" readonly required>
                                 </td>
                                 <td class="p-0">
                                     <input v-model.number="item.qty" type="number" min="1" class="form-control border-0 rounded-0 px-3 py-2" required>
@@ -157,7 +214,7 @@ export default {
 </template>
 
 <style scoped>
-.table .form-control:focus {
+.table .form-control:focus, .table .form-select:focus {
     box-shadow: none;
     background-color: #f8f9fa;
 }

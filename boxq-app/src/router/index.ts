@@ -6,6 +6,8 @@ const Dashboard = () => import('../views/procurement/Dashboard.vue');
 const CreateRequest = () => import('../views/procurement/RequisitionCreate.vue');
 const RequisitionDetail = () => import('../views/procurement/RequisitionDetail.vue');
 const Profile = () => import('../views/settings/Profile.vue');
+const ProductList = () => import('../views/catalog/ProductList.vue');
+const ProductManagement = () => import('../views/admin/ProductManagement.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -44,6 +46,18 @@ const router = createRouter({
       path: '/profile', 
       name: 'profile', 
       component: Profile,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/catalog',
+      name: 'catalog',
+      component: ProductList,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/admin/products',
+      name: 'admin-products',
+      component: ProductManagement,
       meta: { requiresAuth: true }
     }
   ]

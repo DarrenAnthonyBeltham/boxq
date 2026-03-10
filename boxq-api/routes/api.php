@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\RequisitionController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ProductController;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -24,4 +25,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/requisitions', [RequisitionController::class, 'store']);
     Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
+
+    Route::apiResource('products', ProductController::class);
 });
