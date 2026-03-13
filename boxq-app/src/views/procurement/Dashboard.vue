@@ -106,13 +106,13 @@ export default {
                             <th class="text-uppercase small fw-bold text-secondary">Total</th>
                             <th class="text-uppercase small fw-bold text-secondary">Status</th>
                             <th class="text-uppercase small fw-bold text-secondary">Date</th>
-                            <th v-if="userRole !== 'employee'" class="text-uppercase small fw-bold text-secondary text-end pe-4">Actions</th>
+                            <th class="text-uppercase small fw-bold text-secondary text-end pe-4">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-for="req in requisitions" :key="getSafeId(req)">
                             <td class="ps-4 font-monospace small">
-                                <RouterLink :to="`/requisition/${getSafeId(req)}`" class="text-decoration-none fw-bold">
+                                <RouterLink :to="req.status === 'Draft' ? `/create?id=${getSafeId(req)}` : `/requisition/${getSafeId(req)}`" class="text-decoration-none fw-bold">
                                     #{{ getSafeId(req).slice(-6).toUpperCase() }}
                                 </RouterLink>
                             </td>
@@ -125,24 +125,37 @@ export default {
                                 <span v-else-if="req.status === 'Approved'" class="badge bg-success">Approved</span>
                                 <span v-else-if="req.status === 'Rejected'" class="badge bg-danger">Rejected</span>
                                 <span v-else-if="req.status === 'Paid'" class="badge bg-primary">Paid</span>
+                                <span v-else-if="req.status === 'Draft'" class="badge bg-secondary"><i class="fa-solid fa-pen me-1 text-white-50"></i>Draft</span>
                                 <span v-else class="badge bg-secondary">{{ req.status || 'Unknown' }}</span>
                             </td>
                             <td class="text-muted small">
                                 {{ req.created_at ? new Date(req.created_at).toLocaleDateString() : 'N/A' }}
                             </td>
-                            <td v-if="userRole !== 'employee'" class="text-end pe-4">
-                                <div v-if="userRole === 'manager' && req.status === 'Pending'">
+                            <td class="text-end pe-4">
+                                <div v-if="req.status === 'Draft'">
+                                    <RouterLink :to="`/create?id=${getSafeId(req)}`" class="btn btn-sm btn-outline-primary px-3">
+                                        Edit Draft
+                                    </RouterLink>
+                                </div>
+                                <div v-else-if="userRole === 'manager' && req.status === 'Pending'">
                                     <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-primary px-3">
-                                        Review Request
+                                        Review
                                     </RouterLink>
                                 </div>
                                 <div v-else-if="userRole === 'finance' && req.status === 'Approved'">
                                     <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-primary px-3">
-                                        Process Payment
+                                        Process
                                     </RouterLink>
                                 </div>
                                 <div v-else-if="userRole === 'admin' && req.status !== 'Paid'">
-                                    <button @click="updateStatus(getSafeId(req), 'Approved')" class="btn btn-sm btn-outline-secondary">Force Approve</button>
+                                    <button @click="updateStatus(getSafeId(req), 'Approved')" class="btn btn-sm btn-outline-success px-3">
+                                        Force Approve
+                                    </button>
+                                </div>
+                                <div v-else>
+                                    <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-light px-3 text-secondary border">
+                                        View
+                                    </RouterLink>
                                 </div>
                             </td>
                         </tr>

@@ -4,75 +4,108 @@ import { useRoute, useRouter } from 'vue-router';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 
-const route = useRoute();
-const router = useRouter();
-
-interface Item {
+interface RequisitionItem {
     name: string;
     price: number;
     qty: number;
 }
 
+interface CostCenter {
+    department: string;
+    percentage: number;
+}
+
 interface Requisition {
-    id?: string;
-    _id?: string | { $oid: string };
+    id: number;
+    _id?: string;
+    user_id: string;
     requester: string;
     department: string;
-    justification?: string;
-    items: Item[];
+    justification: string;
+    items: RequisitionItem[];
     total_price: number;
+    currency: string;
+    exchange_rate: number;
+    cost_centers: CostCenter[];
     status: string;
     reason?: string;
+    attachment?: string;
     created_at: string;
 }
 
-const req = ref<Requisition | null>(null);
+const route = useRoute();
+const router = useRouter();
+const requisition = ref<Requisition | null>(null);
 const loading = ref(true);
-const userRole = ref('');
-const statusReason = ref('');
+const currentUser = ref({ role: '', department: '' });
 
-const fetchDetail = async () => {
+const isProcessing = ref(false);
+const showRejectInput = ref(false);
+const rejectReason = ref('');
+
+onMounted(async () => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+        currentUser.value = JSON.parse(userData);
+    }
+    await fetchRequisition();
+});
+
+const fetchRequisition = async () => {
     try {
         const response = await api.get(`/requisitions/${route.params.id}`);
-        req.value = response.data;
+        requisition.value = response.data;
     } catch (error) {
-        alert("Unable to load requisition details.");
+        console.error("Failed to fetch requisition:", error);
         router.push('/');
     } finally {
         loading.value = false;
     }
 };
 
+const cloneRequest = () => {
+    if (requisition.value) {
+        const targetId = requisition.value._id || requisition.value.id;
+        router.push(`/create?clone_id=${targetId}`);
+    }
+};
+
 const updateStatus = async (newStatus: string) => {
-    if (!req.value) return;
-    
-    if (newStatus === 'Rejected' && !statusReason.value.trim()) {
+    if (newStatus === 'Rejected' && !rejectReason.value) {
         alert("Please provide a reason for rejection.");
         return;
     }
 
+    isProcessing.value = true;
     try {
-        const idToUpdate = req.value.id || (typeof req.value._id === 'object' ? req.value._id.$oid : req.value._id);
-        
-        await api.patch(`/requisitions/${idToUpdate}/status`, { 
+        await api.patch(`/requisitions/${route.params.id}/status`, {
             status: newStatus,
-            reason: statusReason.value 
+            reason: newStatus === 'Rejected' ? rejectReason.value : null
         });
-        statusReason.value = '';
-        await fetchDetail();
+        await fetchRequisition();
+        showRejectInput.value = false;
+        rejectReason.value = '';
     } catch (error) {
         alert("Failed to update status.");
+    } finally {
+        isProcessing.value = false;
     }
 };
 
-onMounted(() => {
-    const userData = localStorage.getItem('user');
-    if (userData) {
-        const user = JSON.parse(userData);
-        userRole.value = user.role;
+const getStatusBadge = (status: string) => {
+    switch(status) {
+        case 'Approved': return 'bg-success';
+        case 'Rejected': return 'bg-danger';
+        case 'Paid': return 'bg-info text-dark';
+        default: return 'bg-warning text-dark';
     }
-    fetchDetail();
-});
+};
+
+const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+};
 </script>
 
 <script lang="ts">
@@ -83,109 +116,142 @@ export default {
 
 <template>
     <MainLayout>
-        <div class="mb-4">
-            <button @click="router.push('/')" class="btn btn-sm btn-outline-secondary mb-3">
-                <i class="fa-solid fa-arrow-left me-2"></i>Back to Dashboard
+        <div class="mb-4 d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-3">
+                <button @click="router.push('/')" class="btn btn-outline-secondary">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <div>
+                    <h3 class="fw-bold text-dark mb-0">Requisition Details</h3>
+                    <p class="text-muted mb-0 small">Review and process the purchase request.</p>
+                </div>
+            </div>
+            <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm">
+                <i class="fa-solid fa-copy me-2"></i>Clone Request
             </button>
-            <h3 class="fw-bold text-dark mb-1">Requisition Details</h3>
         </div>
 
         <div v-if="loading" class="text-center py-5">
-            <div class="spinner-border text-secondary" role="status">
-                <span class="visually-hidden"></span>
-            </div>
+            <div class="spinner-border text-primary" role="status"></div>
         </div>
 
-        <div v-else-if="req" class="card border-0 shadow-sm">
-            <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
-                <div class="font-monospace text-muted fw-bold">
-                    #{{ String(req.id || (typeof req._id === 'object' ? req._id.$oid : req._id)).slice(-6).toUpperCase() }}
-                </div>
-                <div>
-                    <span v-if="req.status === 'Pending'" class="badge bg-warning text-dark bg-opacity-75 fs-6">Pending Review</span>
-                    <span v-else-if="req.status === 'Approved'" class="badge bg-success fs-6">Approved</span>
-                    <span v-else-if="req.status === 'Rejected'" class="badge bg-danger fs-6">Rejected</span>
-                    <span v-else-if="req.status === 'Paid'" class="badge bg-primary fs-6">Payment Processed</span>
+        <div v-else-if="requisition" class="row">
+            <div class="col-lg-8">
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body p-4">
+                        <div class="d-flex justify-content-between align-items-start mb-4">
+                            <div>
+                                <h5 class="fw-bold mb-1">Request by {{ requisition.requester }}</h5>
+                                <span class="text-muted small">{{ requisition.department }} Department • {{ formatDate(requisition.created_at) }}</span>
+                            </div>
+                            <span class="badge px-3 py-2 fs-6" :class="getStatusBadge(requisition.status)">
+                                {{ requisition.status }}
+                            </span>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-2">Business Justification</h6>
+                            <p class="mb-0 bg-light p-3 rounded text-dark">{{ requisition.justification }}</p>
+                        </div>
+
+                        <div v-if="requisition.attachment" class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-2">Attached Documentation</h6>
+                            <a :href="`http://127.0.0.1:8000/storage/${requisition.attachment}`" target="_blank" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center">
+                                <i class="fa-solid fa-paperclip me-2"></i> View Attachment
+                            </a>
+                        </div>
+
+                        <h6 class="text-uppercase text-muted small fw-bold mb-3 mt-5">Line Items</h6>
+                        <div class="table-responsive">
+                            <table class="table table-bordered align-middle mb-0">
+                                <thead class="bg-light">
+                                    <tr>
+                                        <th class="small text-secondary">Item Name</th>
+                                        <th class="small text-secondary text-end" style="width: 120px;">Price</th>
+                                        <th class="small text-secondary text-center" style="width: 80px;">Qty</th>
+                                        <th class="small text-secondary text-end" style="width: 140px;">Total ({{ requisition.currency }})</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(item, index) in requisition.items" :key="index">
+                                        <td class="fw-medium">{{ item.name }}</td>
+                                        <td class="text-end text-muted">{{ requisition.currency === 'USD' ? '$' : 'Rp' }}{{ Number(item.price).toLocaleString() }}</td>
+                                        <td class="text-center">{{ item.qty }}</td>
+                                        <td class="text-end fw-bold">{{ requisition.currency === 'USD' ? '$' : 'Rp' }}{{ (item.price * item.qty).toLocaleString() }}</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-light">
+                                        <td colspan="3" class="text-end fw-bold text-uppercase small text-secondary">Total Cost</td>
+                                        <td class="text-end fw-bold fs-5 text-primary">
+                                            {{ requisition.currency === 'USD' ? '$' : 'Rp' }}{{ Number(requisition.total_price).toLocaleString() }}
+                                        </td>
+                                    </tr>
+                                    <tr v-if="requisition.currency === 'USD'" class="bg-light">
+                                        <td colspan="4" class="text-end small text-muted border-top-0 pt-0">
+                                            Converted: Rp{{ (requisition.total_price * requisition.exchange_rate).toLocaleString() }} (Rate: {{ requisition.exchange_rate }})
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        
+                        <div v-if="requisition.cost_centers && requisition.cost_centers.length > 0" class="mt-4 border-top pt-4">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-3">Cost Center Allocation</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                <span v-for="(cc, index) in requisition.cost_centers" :key="index" class="badge bg-light text-dark border p-2">
+                                    {{ cc.department }} ({{ cc.percentage }}%)
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="card-body p-4">
-                
-                <div v-if="req.reason" class="alert mb-4 d-flex gap-3" :class="req.status === 'Rejected' ? 'alert-danger' : 'alert-success'">
-                    <i class="fa-solid mt-1" :class="req.status === 'Rejected' ? 'fa-circle-exclamation' : 'fa-comment-dots'"></i>
-                    <div>
-                        <h6 class="alert-heading fw-bold mb-1">
-                            {{ req.status === 'Rejected' ? 'Requisition Rejected' : 'Manager Notes' }}
+            <div class="col-lg-4">
+                <div v-if="requisition.status === 'Pending' && currentUser.role === 'manager' && currentUser.department === requisition.department" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
+                    <div class="card-body p-4">
+                        <h6 class="fw-bold mb-3">Manager Action Required</h6>
+                        <p class="small text-muted mb-4">Review the justification and attached files before making a decision.</p>
+                        
+                        <div v-if="!showRejectInput" class="d-flex gap-2">
+                            <button @click="updateStatus('Approved')" class="btn btn-success flex-grow-1 fw-bold" :disabled="isProcessing">
+                                <i class="fa-solid fa-check me-1"></i> Approve
+                            </button>
+                            <button @click="showRejectInput = true" class="btn btn-outline-danger flex-grow-1 fw-bold" :disabled="isProcessing">
+                                <i class="fa-solid fa-xmark me-1"></i> Reject
+                            </button>
+                        </div>
+
+                        <div v-else class="animate__animated animate__fadeIn">
+                            <label class="form-label small fw-bold text-danger">Reason for Rejection</label>
+                            <textarea v-model="rejectReason" class="form-control mb-3" rows="3" placeholder="Explain why this was rejected..." required></textarea>
+                            <div class="d-flex gap-2">
+                                <button @click="updateStatus('Rejected')" class="btn btn-danger flex-grow-1" :disabled="isProcessing || !rejectReason">Confirm Reject</button>
+                                <button @click="showRejectInput = false" class="btn btn-light text-muted" :disabled="isProcessing">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="requisition.status === 'Approved' && (currentUser.role === 'finance' || currentUser.role === 'admin')" class="card border-0 shadow-sm mb-4 border-top border-info border-3">
+                    <div class="card-body p-4">
+                        <h6 class="fw-bold mb-3">Finance Action Required</h6>
+                        <p class="small text-muted mb-4">This request has been manager-approved. Process the payment or generate the PO, then mark as paid.</p>
+                        <button @click="updateStatus('Paid')" class="btn btn-info w-100 fw-bold text-white" :disabled="isProcessing">
+                            <i class="fa-solid fa-file-invoice-dollar me-2"></i> Mark as Paid
+                        </button>
+                    </div>
+                </div>
+
+                <div v-if="requisition.reason" class="card border-0 shadow-sm" :class="requisition.status === 'Rejected' ? 'bg-danger bg-opacity-10' : 'bg-success bg-opacity-10'">
+                    <div class="card-body p-4">
+                        <h6 class="fw-bold mb-2" :class="requisition.status === 'Rejected' ? 'text-danger' : 'text-success'">
+                            <i class="fa-solid me-2" :class="requisition.status === 'Rejected' ? 'fa-circle-exclamation' : 'fa-comment-dots'"></i>
+                            {{ requisition.status === 'Rejected' ? 'Rejection Notes' : 'Approval Notes' }}
                         </h6>
-                        <p class="mb-0 small">{{ req.reason }}</p>
+                        <p class="small mb-0 text-dark">{{ requisition.reason }}</p>
                     </div>
-                </div>
-
-                <div class="row mb-4">
-                    <div class="col-md-6">
-                        <h6 class="text-uppercase text-muted small fw-bold mb-3">Requested By</h6>
-                        <h5 class="fw-bold mb-1">{{ req.requester }}</h5>
-                        <p class="text-secondary mb-0">{{ req.department }} Department</p>
-                    </div>
-                    <div class="col-md-6 text-md-end mt-4 mt-md-0">
-                        <h6 class="text-uppercase text-muted small fw-bold mb-3">Submission Date</h6>
-                        <h5 class="fw-bold mb-0">{{ new Date(req.created_at).toLocaleDateString() }}</h5>
-                    </div>
-                </div>
-
-                <div class="bg-light p-3 rounded border mb-5">
-                    <h6 class="text-uppercase text-muted small fw-bold mb-2">Business Justification</h6>
-                    <p class="mb-0 text-dark">{{ req.justification || 'No justification provided for this request.' }}</p>
-                </div>
-
-                <h6 class="text-uppercase text-muted small fw-bold mb-3">Line Items</h6>
-                <div class="table-responsive mb-4">
-                    <table class="table table-bordered mb-0">
-                        <thead class="bg-light">
-                            <tr>
-                                <th class="text-secondary small">Description</th>
-                                <th class="text-center text-secondary small" style="width: 100px;">Qty</th>
-                                <th class="text-end text-secondary small" style="width: 150px;">Unit Price</th>
-                                <th class="text-end text-secondary small" style="width: 150px;">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="(item, index) in req.items" :key="index">
-                                <td class="fw-medium">{{ item.name }}</td>
-                                <td class="text-center">{{ item.qty }}</td>
-                                <td class="text-end">${{ Number(item.price).toFixed(2) }}</td>
-                                <td class="text-end fw-bold">${{ (item.price * item.qty).toFixed(2) }}</td>
-                            </tr>
-                        </tbody>
-                        <tfoot class="bg-light">
-                            <tr>
-                                <td colspan="3" class="text-end text-uppercase small fw-bold text-secondary align-middle">Grand Total</td>
-                                <td class="text-end fs-5 fw-bold text-dark">${{ Number(req.total_price).toFixed(2) }}</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-
-                <div v-if="userRole === 'manager' && req.status === 'Pending'" class="bg-light p-4 rounded border mt-4">
-                    <h6 class="fw-bold mb-3">Manager Review</h6>
-                    <div class="mb-3">
-                        <label class="form-label small text-muted">Manager Comments (Required for rejection, optional for approval)</label>
-                        <textarea v-model="statusReason" class="form-control" rows="2" placeholder="Leave a note for the employee..."></textarea>
-                    </div>
-                    <div class="d-flex justify-content-end gap-2">
-                        <button @click="updateStatus('Rejected')" class="btn btn-outline-danger px-4">Reject</button>
-                        <button @click="updateStatus('Approved')" class="btn btn-success px-4">Approve</button>
-                    </div>
-                </div>
-                
-                <div v-else-if="userRole === 'finance' && req.status === 'Approved'" class="bg-light p-3 rounded border d-flex justify-content-end mt-4">
-                    <button @click="updateStatus('Paid')" class="btn btn-primary px-4">
-                        <i class="fa-solid fa-check-double me-2"></i>Mark as Paid
-                    </button>
-                </div>
-
-                <div v-else-if="userRole === 'admin' && req.status !== 'Paid'" class="bg-light p-3 rounded border d-flex justify-content-end mt-4">
-                    <button @click="updateStatus('Approved')" class="btn btn-outline-secondary px-4">Force Approve</button>
                 </div>
             </div>
         </div>
