@@ -28,6 +28,7 @@ interface Requisition {
     exchange_rate: number;
     cost_centers: CostCenter[];
     status: string;
+    approval_stage?: string;
     reason?: string;
     attachment?: string;
     created_at: string;
@@ -144,9 +145,14 @@ export default {
                                 <h5 class="fw-bold mb-1">Request by {{ requisition.requester }}</h5>
                                 <span class="text-muted small">{{ requisition.department }} Department • {{ formatDate(requisition.created_at) }}</span>
                             </div>
-                            <span class="badge px-3 py-2 fs-6" :class="getStatusBadge(requisition.status)">
-                                {{ requisition.status }}
-                            </span>
+                            <div class="text-end">
+                                <span class="badge px-3 py-2 fs-6 mb-1 d-block" :class="getStatusBadge(requisition.status)">
+                                    {{ requisition.status }}
+                                </span>
+                                <span v-if="requisition.status === 'Pending' && requisition.approval_stage" class="small text-muted fw-bold">
+                                    Awaiting: {{ requisition.approval_stage }}
+                                </span>
+                            </div>
                         </div>
 
                         <div class="mb-4">
@@ -209,9 +215,9 @@ export default {
             </div>
 
             <div class="col-lg-4">
-                <div v-if="requisition.status === 'Pending' && currentUser.role === 'manager' && currentUser.department === requisition.department" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
+                <div v-if="requisition.status === 'Pending' && ((currentUser.role === 'manager' && requisition.approval_stage === 'Manager') || (currentUser.role === 'admin' && requisition.approval_stage === 'VP') || (currentUser.role === 'finance' && requisition.approval_stage === 'Finance Director'))" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
                     <div class="card-body p-4">
-                        <h6 class="fw-bold mb-3">Manager Action Required</h6>
+                        <h6 class="fw-bold mb-3">{{ requisition.approval_stage }} Action Required</h6>
                         <p class="small text-muted mb-4">Review the justification and attached files before making a decision.</p>
                         
                         <div v-if="!showRejectInput" class="d-flex gap-2">
@@ -237,7 +243,7 @@ export default {
                 <div v-if="requisition.status === 'Approved' && (currentUser.role === 'finance' || currentUser.role === 'admin')" class="card border-0 shadow-sm mb-4 border-top border-info border-3">
                     <div class="card-body p-4">
                         <h6 class="fw-bold mb-3">Finance Action Required</h6>
-                        <p class="small text-muted mb-4">This request has been manager-approved. Process the payment or generate the PO, then mark as paid.</p>
+                        <p class="small text-muted mb-4">This request has been fully approved by the chain of command. Process the payment or generate the PO, then mark as paid.</p>
                         <button @click="updateStatus('Paid')" class="btn btn-info w-100 fw-bold text-white" :disabled="isProcessing">
                             <i class="fa-solid fa-file-invoice-dollar me-2"></i> Mark as Paid
                         </button>

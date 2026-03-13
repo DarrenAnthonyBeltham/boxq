@@ -16,12 +16,14 @@ class Requisition extends Model
         'justification',
         'items',
         'total_price',
-        'currency',      
-        'exchange_rate',    
+        'currency',
+        'exchange_rate',
         'cost_centers',
         'status',
+        'approval_stage',
+        'approval_token',
         'reason',
-        'attachment',
+        'attachment'
     ];
 
     protected $casts = [
