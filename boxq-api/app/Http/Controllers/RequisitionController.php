@@ -118,6 +118,8 @@ class RequisitionController extends Controller
             'attachment' => $attachmentPath,
         ]);
 
+        event(new \App\Events\RequisitionSubmitted($requisition));
+
         if ($approvalToken) {
             Mail::to('darrenanthonybeltham@gmail.com')->send(new ManagerApprovalEmail($requisition));
         }

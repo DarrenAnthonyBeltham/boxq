@@ -1,141 +1,189 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, computed, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import api from '../services/api';
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
+
+interface ToastMessage {
+    id: number;
+    title: string;
+    message: string;
+    time: string;
+}
+
+interface RequisitionEvent {
+    requisition: {
+        requester: string;
+        department: string;
+        total_price: number | string;
+    }
+}
 
 const router = useRouter();
-const user = ref({
-    name: 'Loading...',
-    department: '',
-    role: '',
-    avatar: ''
+const userStr = localStorage.getItem('user');
+const currentUser = ref(userStr ? JSON.parse(userStr) : { name: 'User', department: 'Dept', role: 'Role' });
+
+const toasts = ref<ToastMessage[]>([]);
+let cleanupEcho: (() => void) | null = null;
+
+const currentDate = computed(() => {
+    const today = new Date();
+    return today.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 });
 
-const loadUser = () => {
-    try {
-        const userData = localStorage.getItem('user');
-        if (userData) {
-            user.value = JSON.parse(userData);
-        }
-    } catch {
-        console.warn("Corrupted user data in storage.");
-    }
+const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    router.push('/login');
+};
+
+const removeToast = (id: number) => {
+    toasts.value = toasts.value.filter(t => t.id !== id);
 };
 
 onMounted(() => {
-    loadUser();
-    window.addEventListener('user-updated', loadUser);
+    Object.assign(window, { Pusher });
+
+    const echo = new Echo({
+        broadcaster: 'pusher',
+        key: 'c1a52c4d254fa5cd0f95',
+        cluster: 'ap1',
+        forceTLS: true
+    });
+
+    echo.channel('requisitions')
+        .listen('.requisition.created', (e: RequisitionEvent) => {
+            if (e.requisition.department === currentUser.value.department || currentUser.value.role === 'admin') {
+                const toastId = Date.now();
+                toasts.value.push({
+                    id: toastId,
+                    title: 'New Requisition',
+                    message: `${e.requisition.requester} submitted a new request for $${e.requisition.total_price}.`,
+                    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                });
+
+                setTimeout(() => {
+                    removeToast(toastId);
+                }, 5000);
+            }
+        });
+
+    cleanupEcho = () => {
+        echo.leaveChannel('requisitions');
+    };
 });
 
 onUnmounted(() => {
-    window.removeEventListener('user-updated', loadUser);
-});
-
-const getInitials = (name?: string) => {
-    if (!name || name === 'Loading...') return '';
-    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-};
-
-const logout = async () => {
-    try {
-        await api.post('/logout');
-    } catch (error) {
-        console.error(error);
-    } finally {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        router.push('/login');
+    if (cleanupEcho) {
+        cleanupEcho();
     }
-};
+});
 </script>
 
 <template>
-    <div class="d-flex w-100 min-vh-100 overflow-hidden">
-        <div class="bg-dark text-white d-flex flex-column flex-shrink-0" style="width: 260px; min-width: 260px; z-index: 1000;">
-            <div class="p-4 border-bottom border-secondary border-opacity-25">
-                <h4 class="fw-bold mb-0"><i class="fa-solid fa-box-open me-2 text-primary"></i>BoxQ</h4>
+    <div class="d-flex vh-100 overflow-hidden" style="background-color: #f8fafc;">
+        <div class="d-flex flex-column flex-shrink-0 p-3" style="width: 260px; background-color: #1e2329;">
+            <div class="d-flex align-items-center mb-4 mt-2 px-3 text-white text-decoration-none">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#3b82f6" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                    <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+                <span class="fs-4 fw-bold ms-3">BoxQ</span>
             </div>
             
-            <div class="p-3 flex-grow-1 overflow-auto">
-                <ul class="nav flex-column gap-1">
-                    <li class="nav-item">
-                        <RouterLink to="/" class="nav-link custom-nav-link" exact-active-class="active-link">
-                            <i class="fa-solid fa-gauge fa-fw me-2"></i> Dashboard
-                        </RouterLink>
-                    </li>
-                    <li class="nav-item">
-                        <RouterLink to="/catalog" class="nav-link custom-nav-link" exact-active-class="active-link">
-                            <i class="fa-solid fa-book fa-fw me-2"></i> Catalog
-                        </RouterLink>
-                    </li>
-                    <li v-if="user?.role !== 'finance'" class="nav-item">
-                        <RouterLink to="/create" class="nav-link custom-nav-link" exact-active-class="active-link">
-                            <i class="fa-solid fa-plus fa-fw me-2"></i> New Request
-                        </RouterLink>
-                    </li>
-                    <li v-if="user?.role === 'admin'" class="nav-item mt-2 pt-2 border-top border-secondary border-opacity-25">
-                        <RouterLink to="/admin/products" class="nav-link custom-nav-link" exact-active-class="active-link">
-                            <i class="fa-solid fa-boxes-stacked fa-fw me-2"></i> Manage Products
-                        </RouterLink>
-                    </li>
-                </ul>
-            </div>
-
-            <div class="p-3 border-top border-secondary border-opacity-25">
-                <RouterLink to="/profile" class="text-decoration-none d-flex align-items-center p-2 rounded profile-link">
-                    <div class="bg-secondary rounded-circle d-flex align-items-center justify-content-center me-3 overflow-hidden flex-shrink-0" style="width: 36px; height: 36px;">
-                        <img v-if="user?.avatar" :src="`http://127.0.0.1:8000${user.avatar}`" class="w-100 h-100 object-fit-cover">
-                        <span v-else class="small fw-bold text-white">{{ getInitials(user?.name) }}</span>
-                    </div>
-                    <div class="small text-truncate text-white">
-                        <div class="fw-bold">{{ user?.name || 'Unknown' }}</div>
-                        <div class="text-white-50 text-capitalize" style="font-size: 0.75rem;">
-                            {{ user?.department || 'N/A' }} • {{ user?.role || 'User' }}
-                        </div>
-                    </div>
-                </RouterLink>
+            <hr class="border-secondary opacity-25 mx-2">
+            
+            <ul class="nav nav-pills flex-column mb-auto gap-2 mt-2">
+                <li class="nav-item">
+                    <router-link to="/" class="nav-link text-white d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        Dashboard
+                    </router-link>
+                </li>
+                <li class="nav-item">
+                    <router-link to="/catalog" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+                        Catalog
+                    </router-link>
+                </li>
+                <li class="nav-item">
+                    <router-link to="/create" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        New Request
+                    </router-link>
+                </li>
+                <li class="nav-item" v-if="currentUser.role === 'admin' || currentUser.role === 'manager'">
+                    <router-link to="/settings" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                        Settings
+                    </router-link>
+                </li>
+            </ul>
+            
+            <hr class="border-secondary opacity-25 mx-2 mb-4">
+            
+            <div class="d-flex align-items-center px-3 mb-2">
+                <div class="rounded-circle bg-secondary d-flex justify-content-center align-items-center text-white fw-bold me-3" style="width: 42px; height: 42px; font-size: 1.2rem;">
+                    {{ currentUser.name.charAt(0).toUpperCase() }}
+                </div>
+                <div class="text-white overflow-hidden">
+                    <strong class="d-block text-truncate">{{ currentUser.name }}</strong>
+                    <small class="text-secondary text-truncate d-block">{{ currentUser.department }} &bull; {{ currentUser.role }}</small>
+                </div>
             </div>
         </div>
 
-        <div class="d-flex flex-column flex-grow-1 bg-light" style="min-width: 0;">
-            <nav class="navbar navbar-light bg-white border-bottom px-4 py-3 flex-shrink-0 d-flex justify-content-between">
-                <span class="text-secondary small fw-medium">
-                    <i class="fa-regular fa-calendar me-1"></i> Today is {{ new Date().toLocaleDateString() }}
-                </span>
-                <button @click="logout" class="btn btn-outline-danger btn-sm px-3 fw-medium">
-                    <i class="fa-solid fa-right-from-bracket me-1"></i> Logout
+        <div class="flex-grow-1 d-flex flex-column overflow-auto position-relative">
+            <header class="d-flex justify-content-between align-items-center p-3 bg-white border-bottom px-4">
+                <div class="text-muted fw-medium d-flex align-items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    Today is {{ currentDate }}
+                </div>
+                <button @click="logout" class="btn btn-outline-danger btn-sm px-3 py-2 fw-bold d-flex align-items-center gap-2 rounded-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                    Logout
                 </button>
-            </nav>
-            
-            <div class="p-4 flex-grow-1 overflow-auto">
-                <slot></slot>
+            </header>
+
+            <div class="p-4 p-md-5">
+                <slot />
+            </div>
+
+            <div class="toast-container position-fixed bottom-0 end-0 p-4" style="z-index: 1055;">
+                <div v-for="toast in toasts" :key="toast.id" class="toast show bg-white shadow-lg border-0 rounded-3 mb-3" role="alert" aria-live="assertive" aria-atomic="true">
+                    <div class="toast-header bg-primary text-white border-0 rounded-top-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                        <strong class="me-auto">{{ toast.title }}</strong>
+                        <small>{{ toast.time }}</small>
+                        <button type="button" class="btn-close btn-close-white ms-2" @click="removeToast(toast.id)" aria-label="Close"></button>
+                    </div>
+                    <div class="toast-body fw-medium text-dark">
+                        {{ toast.message }}
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </template>
 
 <style scoped>
-.custom-nav-link {
-    color: #adb5bd;
-    border-radius: 0.375rem;
-    padding: 0.6rem 1rem;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    white-space: nowrap;
+.nav-link.text-secondary:hover {
+    color: #ffffff !important;
 }
-.custom-nav-link:hover {
-    color: #fff;
-    background-color: rgba(255, 255, 255, 0.05);
+
+.toast {
+    animation: slideInRight 0.3s ease-out forwards;
 }
-.active-link {
-    background-color: #0d6efd !important;
-    color: #fff !important;
-    font-weight: 500;
-    box-shadow: 0 4px 6px -1px rgba(13, 110, 253, 0.2);
-}
-.profile-link:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-    transition: background-color 0.2s;
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 </style>

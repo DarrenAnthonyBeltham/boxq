@@ -19,7 +19,9 @@
     "@popperjs/core": "^2.11.8",
     "axios": "^1.13.5",
     "bootstrap": "^5.3.8",
+    "laravel-echo": "^2.3.1",
     "pinia": "^3.0.4",
+    "pusher-js": "^8.4.0",
     "sass": "^1.97.3",
     "vue": "^3.5.28",
     "vue-router": "^5.0.2"
