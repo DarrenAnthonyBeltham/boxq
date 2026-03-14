@@ -2,12 +2,13 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 const Login = () => import('../views/auth/Login.vue');
 const Register = () => import('../views/auth/Register.vue');
-const Dashboard = () => import('../views/procurement/Dashboard.vue');
+const RequisitionDashboard = () => import('../views/procurement/RequisitionDashboard.vue');
 const CreateRequest = () => import('../views/procurement/RequisitionCreate.vue');
 const RequisitionDetail = () => import('../views/procurement/RequisitionDetail.vue');
 const Profile = () => import('../views/settings/Profile.vue');
 const ProductList = () => import('../views/catalog/ProductList.vue');
 const ProductManagement = () => import('../views/admin/ProductManagement.vue');
+const AccountSettings = () => import('../views/procurement/AccountSettings.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -27,7 +28,7 @@ const router = createRouter({
     { 
       path: '/', 
       name: 'dashboard', 
-      component: Dashboard,
+      component: RequisitionDashboard,
       meta: { requiresAuth: true }
     },
     { 
@@ -58,6 +59,12 @@ const router = createRouter({
       path: '/admin/products',
       name: 'admin-products',
       component: ProductManagement,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: AccountSettings,
       meta: { requiresAuth: true }
     }
   ]

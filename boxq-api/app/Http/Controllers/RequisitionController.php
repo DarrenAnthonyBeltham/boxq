@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Requisition;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\ManagerApprovalEmail;
+use Carbon\Carbon;
 
 class RequisitionController extends Controller
 {
@@ -27,8 +29,20 @@ class RequisitionController extends Controller
                                        ->get();
         } 
         elseif ($user->role === 'manager') {
-            $requisitions = Requisition::where(function ($query) use ($user) {
-                $query->where('department', $user->department)
+            $now = Carbon::now();
+            
+            $delegators = User::where('delegated_to_id', $user->id)
+                              ->whereNotNull('delegation_start')
+                              ->whereNotNull('delegation_end')
+                              ->where('delegation_start', '<=', $now)
+                              ->where('delegation_end', '>=', $now)
+                              ->pluck('department')
+                              ->toArray();
+
+            $departments = array_unique(array_merge([$user->department], $delegators));
+
+            $requisitions = Requisition::where(function ($query) use ($departments) {
+                $query->whereIn('department', $departments)
                       ->where('status', '!=', 'Draft');
             })->orWhere('user_id', $user->id)
               ->orderBy('created_at', 'desc')

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 
@@ -25,6 +25,18 @@ interface Requisition {
 const requisitions = ref<Requisition[]>([]);
 const loading = ref(true);
 const userRole = ref('');
+const currentPage = ref(1);
+const itemsPerPage = 11;
+
+const totalPages = computed(() => {
+    return Math.ceil(requisitions.value.length / itemsPerPage);
+});
+
+const paginatedRequisitions = computed(() => {
+    const start = (currentPage.value - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return requisitions.value.slice(start, end);
+});
 
 const fetchRequisitions = async () => {
     try {
@@ -52,6 +64,22 @@ const getSafeId = (req: Requisition) => {
         return typeof req._id === 'object' ? String(req._id.$oid) : String(req._id);
     }
     return 'UNKNOWN';
+};
+
+const nextPage = () => {
+    if (currentPage.value < totalPages.value) {
+        currentPage.value++;
+    }
+};
+
+const prevPage = () => {
+    if (currentPage.value > 1) {
+        currentPage.value--;
+    }
+};
+
+const goToPage = (page: number) => {
+    currentPage.value = page;
 };
 
 onMounted(() => {
@@ -110,7 +138,7 @@ export default {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="req in requisitions" :key="getSafeId(req)">
+                        <tr v-for="req in paginatedRequisitions" :key="getSafeId(req)">
                             <td class="ps-4 font-monospace small">
                                 <RouterLink :to="req.status === 'Draft' ? `/create?id=${getSafeId(req)}` : `/requisition/${getSafeId(req)}`" class="text-decoration-none fw-bold">
                                     #{{ getSafeId(req).slice(-6).toUpperCase() }}
@@ -162,6 +190,33 @@ export default {
                     </tbody>
                 </table>
             </div>
+
+            <div v-if="totalPages > 1" class="card-footer bg-white border-top py-3">
+                <nav>
+                    <ul class="pagination justify-content-center mb-0 gap-2">
+                        <li class="page-item" :class="{ disabled: currentPage === 1 }">
+                            <button class="page-link shadow-none border-0 text-dark fw-bold bg-light rounded px-3" @click="prevPage">Previous</button>
+                        </li>
+                        <li v-for="page in totalPages" :key="page" class="page-item">
+                            <button 
+                                class="page-link shadow-none border-0 rounded px-3 fw-bold" 
+                                :class="currentPage === page ? 'bg-dark text-white' : 'text-dark'"
+                                @click="goToPage(page)">
+                                {{ page }}
+                            </button>
+                        </li>
+                        <li class="page-item" :class="{ disabled: currentPage === totalPages }">
+                            <button class="page-link shadow-none border-0 text-dark fw-bold bg-light rounded px-3" @click="nextPage">Next</button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
         </div>
     </MainLayout>
 </template>
+
+<style scoped>
+.page-link {
+    cursor: pointer;
+}
+</style>
