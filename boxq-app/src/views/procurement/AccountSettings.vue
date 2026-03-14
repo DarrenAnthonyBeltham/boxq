@@ -1,113 +1,355 @@
-<template>
-    <div class="container mt-4">
-        <h3 class="fw-bold text-dark mb-4 text-center text-md-start">Account Settings</h3>
-
-        <div class="card shadow-sm border-0 mb-4">
-            <div class="card-body p-3 p-md-4">
-                <h5 class="fw-bold mb-3">Vacation Delegation</h5>
-                <p class="text-muted mb-4">Temporarily route your approval requests to another manager while you are away.</p>
-
-                <form @submit.prevent="saveDelegation">
-                    <div class="row g-3 mb-3">
-                        <div class="col-12 col-md-4">
-                            <label class="form-label fw-bold">Delegate Approvals To</label>
-                            <select v-model="form.delegated_to_id" class="form-select">
-                                <option value="">-- Remove Delegation --</option>
-                                <option v-for="u in filteredUsers" :key="u._id || u.id" :value="u._id || u.id">
-                                    {{ u.name }} ({{ u.department }})
-                                </option>
-                            </select>
-                        </div>
-                        <div class="col-12 col-md-4">
-                            <label class="form-label fw-bold">Start Date</label>
-                            <input type="date" v-model="form.delegation_start" class="form-control" :required="form.delegated_to_id !== ''">
-                        </div>
-                        <div class="col-12 col-md-4">
-                            <label class="form-label fw-bold">End Date</label>
-                            <input type="date" v-model="form.delegation_end" class="form-control" :required="form.delegated_to_id !== ''">
-                        </div>
-                    </div>
-
-                    <div v-if="successMsg" class="alert alert-success mt-3 py-2">
-                        {{ successMsg }}
-                    </div>
-
-                    <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
-                        <button type="submit" class="btn btn-dark px-4 py-2" :disabled="loading">
-                            <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
-                            Save Changes
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, computed } from 'vue';
 import axios from 'axios';
+import api from '../../services/api';
+import MainLayout from '../../layouts/MainLayout.vue';
 
-interface User {
-    _id?: string;
+interface Colleague {
+    _id?: string | { $oid: string };
     id?: string;
     name: string;
     department: string;
-    delegated_to_id?: string | null;
-    delegation_start?: string | null;
-    delegation_end?: string | null;
 }
 
-const users = ref<User[]>([]);
-const loading = ref(false);
-const successMsg = ref('');
-const currentUser = ref<User>(JSON.parse(localStorage.getItem('user') || '{}'));
-
-const form = ref({
-    delegated_to_id: currentUser.value.delegated_to_id || '',
-    delegation_start: currentUser.value.delegation_start ? currentUser.value.delegation_start.split('T')[0] : '',
-    delegation_end: currentUser.value.delegation_end ? currentUser.value.delegation_end.split('T')[0] : ''
+const currentUser = ref({
+    _id: '',
+    id: '',
+    name: '',
+    email: '',
+    department: '',
+    role: '',
+    avatar: '',
+    preferences: {
+        email_on_status: true,
+        email_on_new: false
+    },
+    delegated_to_id: '',
+    delegation_start: '',
+    delegation_end: ''
 });
 
-const filteredUsers = computed(() => {
-    return users.value.filter(u => (u._id || u.id) !== (currentUser.value._id || currentUser.value.id));
+const passwordForm = reactive({
+    current_password: '',
+    new_password: '',
+    new_password_confirmation: ''
 });
 
-const fetchUsers = async () => {
+const prefForm = reactive({
+    email_on_status: true,
+    email_on_new: false
+});
+
+const delegationForm = reactive({
+    delegated_to_id: '',
+    delegation_start: '',
+    delegation_end: ''
+});
+
+const colleagues = ref<Colleague[]>([]);
+const isSubmittingPassword = ref(false);
+const isSavingPrefs = ref(false);
+const isSavingDelegation = ref(false);
+const isUploading = ref(false);
+
+const passSuccess = ref('');
+const passError = ref('');
+const prefSuccess = ref('');
+const delegationSuccess = ref('');
+const fileInput = ref<HTMLInputElement | null>(null);
+
+interface Identifiable {
+    _id?: string | { $oid: string };
+    id?: string;
+}
+
+const getSafeId = (item: Identifiable) => {
+    if (item.id) return String(item.id);
+    if (item._id) return typeof item._id === 'object' ? String(item._id.$oid) : String(item._id);
+    return Math.random().toString();
+};
+
+const filteredColleagues = computed(() => {
+    const currentId = getSafeId(currentUser.value);
+    return colleagues.value.filter(c => getSafeId(c) !== currentId);
+});
+
+onMounted(() => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+        const parsed = JSON.parse(userData);
+        currentUser.value = parsed;
+        
+        if (parsed.preferences) {
+            prefForm.email_on_status = parsed.preferences.email_on_status;
+            prefForm.email_on_new = parsed.preferences.email_on_new;
+        }
+
+        delegationForm.delegated_to_id = parsed.delegated_to_id || '';
+        delegationForm.delegation_start = parsed.delegation_start ? parsed.delegation_start.split('T')[0] : '';
+        delegationForm.delegation_end = parsed.delegation_end ? parsed.delegation_end.split('T')[0] : '';
+
+        if (parsed.role === 'manager' || parsed.role === 'admin') {
+            fetchColleagues();
+        }
+    }
+});
+
+const fetchColleagues = async () => {
     try {
-        const token = localStorage.getItem('token');
-        const response = await axios.get('http://127.0.0.1:8000/api/users', {
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        users.value = response.data;
+        const response = await api.get('/users');
+        colleagues.value = response.data;
     } catch (error) {
         console.error(error);
+    }
+};
+
+const updatePassword = async () => {
+    isSubmittingPassword.value = true;
+    passSuccess.value = '';
+    passError.value = '';
+
+    try {
+        await api.put('/user/password', passwordForm);
+        passSuccess.value = 'Your password has been successfully updated.';
+        passwordForm.current_password = '';
+        passwordForm.new_password = '';
+        passwordForm.new_password_confirmation = '';
+    } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 422) {
+            passError.value = error.response.data.errors?.current_password?.[0] 
+                || error.response.data.errors?.new_password?.[0] 
+                || 'Invalid input provided.';
+        } else {
+            passError.value = 'A server error occurred. Please try again later.';
+        }
+    } finally {
+        isSubmittingPassword.value = false;
+    }
+};
+
+const savePreferences = async () => {
+    isSavingPrefs.value = true;
+    prefSuccess.value = '';
+
+    try {
+        const response = await api.put('/user/preferences', { preferences: prefForm });
+        prefSuccess.value = 'Preferences saved successfully.';
+        
+        currentUser.value = response.data.user;
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        
+        setTimeout(() => prefSuccess.value = '', 3000);
+    } catch (error) {
+        alert("Failed to save preferences.");
+    } finally {
+        isSavingPrefs.value = false;
     }
 };
 
 const saveDelegation = async () => {
-    loading.value = true;
-    successMsg.value = '';
+    isSavingDelegation.value = true;
+    delegationSuccess.value = '';
+
     try {
-        const token = localStorage.getItem('token');
-        const response = await axios.post('http://127.0.0.1:8000/api/user/delegate', form.value, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
+        const response = await api.post('/user/delegate', delegationForm);
+        delegationSuccess.value = 'Delegation settings updated successfully.';
         
-        localStorage.setItem('user', JSON.stringify(response.data));
         currentUser.value = response.data;
-        successMsg.value = 'Delegation settings updated successfully!';
+        localStorage.setItem('user', JSON.stringify(response.data));
         
-        setTimeout(() => { successMsg.value = ''; }, 3000);
+        setTimeout(() => delegationSuccess.value = '', 3000);
     } catch (error) {
-        console.error(error);
-        alert('Failed to save settings.');
+        alert("Failed to save delegation settings.");
     } finally {
-        loading.value = false;
+        isSavingDelegation.value = false;
     }
 };
 
-onMounted(() => {
-    fetchUsers();
-});
+const triggerFileUpload = () => {
+    fileInput.value?.click();
+};
+
+const handleFileUpload = async (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    if (!target.files || target.files.length === 0) return;
+
+    const file = target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    isUploading.value = true;
+    try {
+        const response = await api.post('/user/avatar', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        
+        currentUser.value = response.data.user;
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        
+        window.dispatchEvent(new Event('user-updated'));
+        
+    } catch (error) {
+        alert("Failed to upload image. Must be a jpeg/png under 2MB.");
+    } finally {
+        isUploading.value = false;
+        if (fileInput.value) fileInput.value.value = ''; 
+    }
+};
 </script>
+
+<script lang="ts">
+export default {
+    name: 'ProfileSettings'
+}
+</script>
+
+<template>
+    <MainLayout>
+        <div class="mb-4">
+            <h3 class="fw-bold text-dark mb-1">Account Settings</h3>
+            <p class="text-muted mb-0">Manage your profile, security, and workflow preferences.</p>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-4 col-md-5 mb-4 mb-md-0">
+                <div class="card border-0 shadow-sm text-center p-4">
+                    <div class="position-relative d-inline-block mx-auto mb-3" @click="triggerFileUpload" style="cursor: pointer;">
+                        <input type="file" class="d-none" ref="fileInput" accept="image/*" @change="handleFileUpload">
+                        <img v-if="currentUser.avatar" :src="`http://127.0.0.1:8000${currentUser.avatar}`" class="rounded-circle object-fit-cover shadow-sm" style="width: 120px; height: 120px; border: 4px solid white;">
+                        <div v-else class="bg-secondary bg-opacity-10 rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width: 120px; height: 120px; border: 4px solid white;">
+                            <span class="fs-1 fw-bold text-secondary">
+                                {{ currentUser.name ? currentUser.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : '' }}
+                            </span>
+                        </div>
+                        <div class="position-absolute bottom-0 end-0 bg-dark text-white rounded-circle d-flex align-items-center justify-content-center border border-white" style="width: 35px; height: 35px; right: 5px !important; bottom: 5px !important;">
+                            <span v-if="isUploading" class="spinner-border spinner-border-sm" role="status"></span>
+                            <i v-else class="fa-solid fa-camera small"></i>
+                        </div>
+                    </div>
+                    <h5 class="fw-bold mb-1">{{ currentUser.name }}</h5>
+                    <p class="text-muted small mb-3">{{ currentUser.email }}</p>
+                    <div class="d-flex justify-content-center gap-2">
+                        <span class="badge bg-light text-dark border">{{ currentUser.department }}</span>
+                        <span class="badge bg-dark text-capitalize">{{ currentUser.role }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-8 col-md-7">
+                <div class="card border-0 shadow-sm p-4 mb-4">
+                    <h6 class="text-uppercase text-muted small fw-bold mb-4">Change Password</h6>
+
+                    <div v-if="passSuccess" class="alert alert-success py-2 small">
+                        <i class="fa-solid fa-circle-check me-2"></i>{{ passSuccess }}
+                    </div>
+                    <div v-if="passError" class="alert alert-danger py-2 small">
+                        <i class="fa-solid fa-circle-exclamation me-2"></i>{{ passError }}
+                    </div>
+
+                    <form @submit.prevent="updatePassword">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold text-secondary">Current Password</label>
+                            <input v-model="passwordForm.current_password" type="password" class="form-control" required>
+                        </div>
+                        <div class="row mb-4">
+                            <div class="col-md-6 mb-3 mb-md-0">
+                                <label class="form-label small fw-bold text-secondary">New Password</label>
+                                <input v-model="passwordForm.new_password" type="password" class="form-control" minlength="8" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-secondary">Confirm New Password</label>
+                                <input v-model="passwordForm.new_password_confirmation" type="password" class="form-control" minlength="8" required>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-end">
+                            <button type="submit" class="btn btn-dark px-4" :disabled="isSubmittingPassword || !passwordForm.current_password || !passwordForm.new_password">
+                                <span v-if="isSubmittingPassword" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                Update Password
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card border-0 shadow-sm p-4 mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h6 class="text-uppercase text-muted small fw-bold mb-0">Notification Preferences</h6>
+                        <span v-if="prefSuccess" class="text-success small fw-bold">
+                            <i class="fa-solid fa-check me-1"></i> Saved
+                        </span>
+                    </div>
+
+                    <div class="list-group list-group-flush mb-4 border-bottom border-top">
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0">
+                            <div>
+                                <h6 class="mb-1 fw-bold text-dark">Status Updates</h6>
+                                <p class="mb-0 small text-muted">Email me when my requests are approved, rejected, or paid.</p>
+                            </div>
+                            <div class="form-check form-switch fs-4">
+                                <input v-model="prefForm.email_on_status" class="form-check-input" type="checkbox" role="switch">
+                            </div>
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0 border-bottom-0">
+                            <div>
+                                <h6 class="mb-1 fw-bold text-dark">New Requisitions</h6>
+                                <p class="mb-0 small text-muted">Email me when a new request requires my attention.</p>
+                            </div>
+                            <div class="form-check form-switch fs-4">
+                                <input v-model="prefForm.email_on_new" class="form-check-input" type="checkbox" role="switch">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-end">
+                        <button @click="savePreferences" class="btn btn-outline-dark px-4" :disabled="isSavingPrefs">
+                            <span v-if="isSavingPrefs" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            Save Preferences
+                        </button>
+                    </div>
+                </div>
+
+                <div v-if="currentUser.role === 'manager' || currentUser.role === 'admin'" class="card border-0 shadow-sm p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <div>
+                            <h6 class="text-uppercase text-muted small fw-bold mb-1">Vacation Delegation</h6>
+                            <p class="mb-0 small text-muted">Temporarily route your approval requests to another manager.</p>
+                        </div>
+                        <span v-if="delegationSuccess" class="text-success small fw-bold">
+                            <i class="fa-solid fa-check me-1"></i> Saved
+                        </span>
+                    </div>
+
+                    <form @submit.prevent="saveDelegation">
+                        <div class="row g-3 mb-4">
+                            <div class="col-12 col-md-12 mb-2">
+                                <label class="form-label small fw-bold text-secondary">Delegate Approvals To</label>
+                                <select v-model="delegationForm.delegated_to_id" class="form-select">
+                                    <option value="">-- Remove Delegation --</option>
+                                    <option v-for="c in filteredColleagues" :key="getSafeId(c)" :value="getSafeId(c)">
+                                        {{ c.name }} ({{ c.department }})
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label small fw-bold text-secondary">Start Date</label>
+                                <input type="date" v-model="delegationForm.delegation_start" class="form-control" :required="delegationForm.delegated_to_id !== ''">
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label small fw-bold text-secondary">End Date</label>
+                                <input type="date" v-model="delegationForm.delegation_end" class="form-control" :required="delegationForm.delegated_to_id !== ''">
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end">
+                            <button type="submit" class="btn btn-dark px-4" :disabled="isSavingDelegation">
+                                <span v-if="isSavingDelegation" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                Save Delegation
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </MainLayout>
+</template>

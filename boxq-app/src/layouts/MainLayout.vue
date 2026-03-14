@@ -21,7 +21,7 @@ interface RequisitionEvent {
 
 const router = useRouter();
 const userStr = localStorage.getItem('user');
-const currentUser = ref(userStr ? JSON.parse(userStr) : { name: 'User', department: 'Dept', role: 'Role' });
+const currentUser = ref(userStr ? JSON.parse(userStr) : { name: 'User', department: 'Dept', role: 'Role', avatar: null });
 
 const toasts = ref<ToastMessage[]>([]);
 let cleanupEcho: (() => void) | null = null;
@@ -71,6 +71,13 @@ onMounted(() => {
     cleanupEcho = () => {
         echo.leaveChannel('requisitions');
     };
+
+    window.addEventListener('user-updated', () => {
+        const updatedStr = localStorage.getItem('user');
+        if (updatedStr) {
+            currentUser.value = JSON.parse(updatedStr);
+        }
+    });
 });
 
 onUnmounted(() => {
@@ -113,25 +120,31 @@ onUnmounted(() => {
                         New Request
                     </router-link>
                 </li>
-                <li class="nav-item" v-if="currentUser.role === 'admin' || currentUser.role === 'manager'">
-                    <router-link to="/settings" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                        Settings
+                <li class="nav-item" v-if="currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'finance'">
+                    <router-link to="/vendors" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        Vendors
+                    </router-link>
+                </li>
+                <li class="nav-item" v-if="currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'finance'">
+                    <router-link to="/purchase-orders" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        Purchase Orders
                     </router-link>
                 </li>
             </ul>
             
-            <hr class="border-secondary opacity-25 mx-2 mb-4">
+            <hr class="border-secondary opacity-25 mx-2 mb-3">
             
-            <div class="d-flex align-items-center px-3 mb-2">
-                <div class="rounded-circle bg-secondary d-flex justify-content-center align-items-center text-white fw-bold me-3" style="width: 42px; height: 42px; font-size: 1.2rem;">
+            <router-link to="/settings" class="d-flex align-items-center px-3 py-2 mb-2 text-decoration-none rounded-3 profile-link transition-all">
+                <div class="rounded-circle bg-secondary d-flex justify-content-center align-items-center text-white fw-bold me-3 flex-shrink-0" style="width: 42px; height: 42px; font-size: 1.2rem;">
                     {{ currentUser.name.charAt(0).toUpperCase() }}
                 </div>
                 <div class="text-white overflow-hidden">
                     <strong class="d-block text-truncate">{{ currentUser.name }}</strong>
                     <small class="text-secondary text-truncate d-block">{{ currentUser.department }} &bull; {{ currentUser.role }}</small>
                 </div>
-            </div>
+            </router-link>
         </div>
 
         <div class="flex-grow-1 d-flex flex-column overflow-auto position-relative">
@@ -170,6 +183,14 @@ onUnmounted(() => {
 <style scoped>
 .nav-link.text-secondary:hover {
     color: #ffffff !important;
+}
+
+.profile-link {
+    cursor: pointer;
+}
+
+.profile-link:hover {
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 .toast {

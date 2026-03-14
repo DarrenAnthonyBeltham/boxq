@@ -66,7 +66,19 @@ const router = createRouter({
       name: 'settings',
       component: AccountSettings,
       meta: { requiresAuth: true }
-    }
+    },
+    {
+      path: '/vendors',
+      name: 'vendors',
+      component: () => import('../views/procurement/VendorDirectory.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/purchase-orders',
+      name: 'purchase-orders',
+      component: () => import('../views/procurement/PurchaseOrders.vue'),
+      meta: { requiresAuth: true }
+    },
   ]
 });
 
