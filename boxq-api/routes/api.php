@@ -30,6 +30,9 @@ Route::middleware('auth:sanctum')->group(function () {
     
     Route::post('/user/delegate', [App\Http\Controllers\UserController::class, 'setDelegation']);
 
+    Route::get('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'index']);
+    Route::post('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'store']);
+
     Route::get('/vendors', [App\Http\Controllers\VendorController::class, 'index']);
     Route::post('/vendors', [App\Http\Controllers\VendorController::class, 'store']);
     Route::get('/purchase-orders', [App\Http\Controllers\PurchaseOrderController::class, 'index']);

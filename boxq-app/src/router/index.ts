@@ -79,6 +79,12 @@ const router = createRouter({
       component: () => import('../views/procurement/PurchaseOrders.vue'),
       meta: { requiresAuth: true }
     },
+    {
+      path: '/receipts',
+      name: 'receipts',
+      component: () => import('../views/procurement/GoodsReceipt.vue'),
+      meta: { requiresAuth: true }
+    },
   ]
 });
 
