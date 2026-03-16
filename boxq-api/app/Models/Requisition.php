@@ -15,6 +15,8 @@ class Requisition extends Model
         'department',
         'justification',
         'items',
+        'subtotal',
+        'tax_amount',
         'total_price',
         'currency',
         'exchange_rate',
@@ -23,7 +25,9 @@ class Requisition extends Model
         'approval_stage',
         'approval_token',
         'reason',
-        'attachment'
+        'attachment',
+        'is_over_budget',
+        'invoice_attachment'
     ];
 
     protected $casts = [

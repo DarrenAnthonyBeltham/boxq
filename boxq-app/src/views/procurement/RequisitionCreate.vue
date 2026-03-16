@@ -49,6 +49,12 @@ const form = reactive({
     cost_centers: [] as CostCenter[]
 });
 
+const budget = ref({
+    limit: 0,
+    spent: 0,
+    remaining: 0
+});
+
 onMounted(async () => {
     const userData = localStorage.getItem('user');
     if (userData) {
@@ -62,8 +68,13 @@ onMounted(async () => {
     }
 
     try {
-        const productResponse = await api.get('/products');
+        const [productResponse, budgetResponse] = await Promise.all([
+            api.get('/products'),
+            api.get('/budget/current').catch(() => ({ data: { limit: 0, spent: 0, remaining: 0 } }))
+        ]);
+        
         products.value = productResponse.data;
+        budget.value = budgetResponse.data;
 
         const targetId = draftId || cloneId;
 
@@ -96,7 +107,7 @@ onMounted(async () => {
             }
         }
     } catch (error) {
-        console.error("Error loading initial data", error);
+        console.error(error);
     }
 });
 
@@ -139,8 +150,30 @@ const totalPercentage = computed(() => {
     return form.cost_centers.reduce((sum, cc) => sum + (Number(cc.percentage) || 0), 0);
 });
 
-const totalEstimatedCost = computed(() => {
+const subtotal = computed(() => {
     return form.items.reduce((total, item) => total + (Number(item.price) * Number(item.qty)), 0);
+});
+
+const taxAmount = computed(() => {
+    return subtotal.value * 0.11;
+});
+
+const grandTotal = computed(() => {
+    return subtotal.value + taxAmount.value;
+});
+
+const grandTotalUSD = computed(() => {
+    return form.currency === 'IDR' ? (grandTotal.value / form.exchange_rate) : grandTotal.value;
+});
+
+const isSoftWarning = computed(() => {
+    if (budget.value.limit === 0) return false;
+    return (budget.value.spent + grandTotalUSD.value) > budget.value.limit && grandTotalUSD.value <= budget.value.limit;
+});
+
+const isHardBlock = computed(() => {
+    if (budget.value.limit === 0) return false;
+    return grandTotalUSD.value > budget.value.limit;
 });
 
 const isSubmitting = ref(false);
@@ -163,6 +196,11 @@ const submitRequest = async (targetStatus: 'Pending' | 'Draft') => {
 
         if (totalPercentage.value !== 100) {
             errorMessage.value = "Validation Error: Cost center allocations must equal exactly 100%.";
+            return;
+        }
+
+        if (isHardBlock.value) {
+            errorMessage.value = "Hard Block: This request exceeds your entire monthly department budget.";
             return;
         }
     }
@@ -205,7 +243,9 @@ const submitRequest = async (targetStatus: 'Pending' | 'Draft') => {
         router.push('/');
     } catch (error) {
         if (axios.isAxiosError(error) && error.response) {
-            if (error.response.status === 401) {
+            if (error.response.data?.error) {
+                errorMessage.value = error.response.data.error;
+            } else if (error.response.status === 401) {
                 errorMessage.value = "Session expired. Please log out and log back in.";
             } else if (error.response.status === 422) {
                 errorMessage.value = "Backend Validation Error: Please check all fields.";
@@ -239,8 +279,23 @@ export default {
             </div>
         </div>
 
+        <div v-if="budget.limit > 0" class="card border-0 shadow-sm mb-4 p-4 rounded-3">
+            <h6 class="fw-bold text-secondary mb-3 text-uppercase small">Department Budget Status (USD)</h6>
+            <div class="d-flex justify-content-between mb-1 small fw-bold">
+                <span>Spent: ${{ budget.spent.toLocaleString() }}</span>
+                <span>Limit: ${{ budget.limit.toLocaleString() }}</span>
+            </div>
+            <div class="progress" style="height: 10px;">
+                <div class="progress-bar bg-dark" role="progressbar" :style="`width: ${(budget.spent / budget.limit) * 100}%`"></div>
+            </div>
+        </div>
+
         <div v-if="errorMessage" class="alert alert-danger shadow-sm py-2 mb-4">
-            <i class="fa-solid fa-circle-exclamation me-2"></i>{{ errorMessage }}
+            <i class="fa-solid fa-circle-exclamation me-2"></i> {{ errorMessage }}
+        </div>
+
+        <div v-if="isSoftWarning" class="alert alert-warning fw-bold border-0 shadow-sm mb-4 text-dark">
+            <i class="fa-solid fa-circle-info me-2"></i> Soft Warn: This purchase will push your department over its monthly budget. It will be flagged for review.
         </div>
 
         <div class="card border-0 shadow-sm p-4">
@@ -360,13 +415,23 @@ export default {
                                 <input v-model.number="form.exchange_rate" type="number" class="form-control form-control-sm w-50 text-end">
                             </div>
 
+                            <div class="mb-2 d-flex justify-content-between align-items-center">
+                                <span class="text-muted small fw-bold">Subtotal:</span>
+                                <span class="fw-bold text-dark">{{ form.currency === 'USD' ? '$' : 'Rp' }}{{ subtotal.toLocaleString(undefined, {minimumFractionDigits: 2}) }}</span>
+                            </div>
+
+                            <div class="mb-3 d-flex justify-content-between align-items-center border-bottom pb-3">
+                                <span class="text-muted small fw-bold">VAT / PPN (11%):</span>
+                                <span class="fw-bold text-dark">{{ form.currency === 'USD' ? '$' : 'Rp' }}{{ taxAmount.toLocaleString(undefined, {minimumFractionDigits: 2}) }}</span>
+                            </div>
+
                             <div class="text-end mt-auto">
-                                <span class="text-muted small d-block text-uppercase fw-bold mb-1">Total Estimated Cost</span>
+                                <span class="text-muted small d-block text-uppercase fw-bold mb-1">Grand Total</span>
                                 <h3 class="fw-bold text-dark mb-0">
-                                    {{ form.currency === 'USD' ? '$' : 'Rp' }}{{ totalEstimatedCost.toLocaleString() }}
+                                    {{ form.currency === 'USD' ? '$' : 'Rp' }}{{ grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2}) }}
                                 </h3>
                                 <div v-if="form.currency === 'USD'" class="text-muted small mt-1">
-                                    ≈ Rp{{ (totalEstimatedCost * form.exchange_rate).toLocaleString() }}
+                                    ≈ Rp{{ (grandTotal * form.exchange_rate).toLocaleString(undefined, {minimumFractionDigits: 2}) }}
                                 </div>
                             </div>
                         </div>
@@ -377,7 +442,7 @@ export default {
                     <button type="button" @click="submitRequest('Draft')" class="btn btn-outline-secondary px-4 py-2 fw-bold" :disabled="isSubmitting">
                         <i class="fa-solid fa-floppy-disk me-2"></i> Save Draft
                     </button>
-                    <button type="button" @click="submitRequest('Pending')" class="btn btn-primary px-4 py-2 fw-bold" :disabled="isSubmitting">
+                    <button type="button" @click="submitRequest('Pending')" class="btn btn-primary px-4 py-2 fw-bold" :disabled="isSubmitting || isHardBlock || form.items.length === 0">
                         <span v-if="isSubmitting" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                         <i v-else class="fa-solid fa-paper-plane me-2"></i>
                         {{ isSubmitting ? 'Submitting...' : 'Submit Request' }}

@@ -27,6 +27,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/requisitions', [RequisitionController::class, 'store']);
     Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
+
+    Route::get('/budget/current', [App\Http\Controllers\BudgetController::class, 'current']);
+    Route::post('/budgets', [App\Http\Controllers\BudgetController::class, 'store']);
     
     Route::post('/user/delegate', [App\Http\Controllers\UserController::class, 'setDelegation']);
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Requisition;
 use App\Models\User;
+use App\Models\Budget;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
@@ -20,10 +21,10 @@ class RequisitionController extends Controller
             $requisitions = Requisition::orderBy('created_at', 'desc')->get();
         } 
         elseif ($user->role === 'finance') {
-            $requisitions = Requisition::whereIn('status', ['Pending', 'Approved'])
+            $requisitions = Requisition::whereIn('status', ['Pending', 'Approved', 'PO Created', 'Received', 'Paid'])
                                        ->where(function ($q) {
                                             $q->where('approval_stage', 'Finance Director')
-                                              ->orWhere('status', 'Approved');
+                                              ->orWhereIn('status', ['Approved', 'PO Created', 'Received', 'Paid']);
                                        })
                                        ->orderBy('created_at', 'desc')
                                        ->get();
@@ -77,17 +78,38 @@ class RequisitionController extends Controller
             'status' => 'required|string|in:Pending,Draft'
         ]);
 
-        $totalPrice = collect($validated['items'])->sum(function ($item) {
+        $subtotal = collect($validated['items'])->sum(function ($item) {
             return ($item['price'] ?? 0) * ($item['qty'] ?? 1);
         });
+
+        $taxAmount = $subtotal * 0.11;
+        $totalPrice = $subtotal + $taxAmount;
 
         $usdTotal = $validated['currency'] === 'IDR' ? ($totalPrice / $validated['exchange_rate']) : $totalPrice;
         
         $status = $validated['status'];
         $approvalStage = null;
         $approvalToken = null;
+        $isOverBudget = false;
 
         if ($status === 'Pending') {
+            $budget = Budget::where('department', $user->department)->first();
+            
+            if ($budget) {
+                $currentSpent = Requisition::where('department', $user->department)
+                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Paid'])
+                    ->where('created_at', '>=', Carbon::now()->startOfMonth())
+                    ->sum('total_price');
+
+                if ($usdTotal > $budget->monthly_limit) {
+                    return response()->json(['error' => 'Hard Block: This single request exceeds your entire monthly budget.'], 422);
+                }
+
+                if (($currentSpent + $usdTotal) > $budget->monthly_limit) {
+                    $isOverBudget = true;
+                }
+            }
+
             if ($usdTotal < 500) {
                 $status = 'Approved';
                 $approvalStage = 'Completed';
@@ -108,6 +130,8 @@ class RequisitionController extends Controller
             'department' => $user->department,
             'justification' => $validated['justification'] ?? '',
             'items' => $validated['items'],
+            'subtotal' => $subtotal,
+            'tax_amount' => $taxAmount,
             'total_price' => $totalPrice,
             'currency' => $validated['currency'],
             'exchange_rate' => $validated['exchange_rate'],
@@ -116,6 +140,7 @@ class RequisitionController extends Controller
             'approval_stage' => $approvalStage,
             'approval_token' => $approvalToken,
             'attachment' => $attachmentPath,
+            'is_over_budget' => $isOverBudget
         ]);
 
         event(new \App\Events\RequisitionSubmitted($requisition));
@@ -153,17 +178,38 @@ class RequisitionController extends Controller
             'status' => 'required|string|in:Pending,Draft'
         ]);
 
-        $totalPrice = collect($validated['items'])->sum(function ($item) {
+        $subtotal = collect($validated['items'])->sum(function ($item) {
             return ($item['price'] ?? 0) * ($item['qty'] ?? 1);
         });
+
+        $taxAmount = $subtotal * 0.11;
+        $totalPrice = $subtotal + $taxAmount;
 
         $usdTotal = $validated['currency'] === 'IDR' ? ($totalPrice / $validated['exchange_rate']) : $totalPrice;
         
         $status = $validated['status'];
         $approvalStage = null;
         $approvalToken = null;
+        $isOverBudget = false;
 
         if ($status === 'Pending') {
+            $budget = Budget::where('department', $user->department)->first();
+            
+            if ($budget) {
+                $currentSpent = Requisition::where('department', $user->department)
+                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Paid'])
+                    ->where('created_at', '>=', Carbon::now()->startOfMonth())
+                    ->sum('total_price');
+
+                if ($usdTotal > $budget->monthly_limit) {
+                    return response()->json(['error' => 'Hard Block: This single request exceeds your entire monthly budget.'], 422);
+                }
+
+                if (($currentSpent + $usdTotal) > $budget->monthly_limit) {
+                    $isOverBudget = true;
+                }
+            }
+
             if ($usdTotal < 500) {
                 $status = 'Approved';
                 $approvalStage = 'Completed';
@@ -179,6 +225,8 @@ class RequisitionController extends Controller
 
         $requisition->justification = $validated['justification'] ?? '';
         $requisition->items = $validated['items'];
+        $requisition->subtotal = $subtotal;
+        $requisition->tax_amount = $taxAmount;
         $requisition->total_price = $totalPrice;
         $requisition->currency = $validated['currency'];
         $requisition->exchange_rate = $validated['exchange_rate'];
@@ -186,6 +234,7 @@ class RequisitionController extends Controller
         $requisition->status = $status;
         $requisition->approval_stage = $approvalStage;
         $requisition->approval_token = $approvalToken;
+        $requisition->is_over_budget = $isOverBudget;
         $requisition->save();
 
         if ($approvalToken) {
@@ -269,6 +318,24 @@ class RequisitionController extends Controller
                 Mail::to('darrenanthonybeltham@gmail.com')->send(new ManagerApprovalEmail($requisition));
             }
         }
+
+        return response()->json($requisition);
+    }
+
+    public function uploadInvoice(Request $request, $id)
+    {
+        $user = $request->user();
+        if ($user->role !== 'finance' && $user->role !== 'admin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'invoice' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120'
+        ]);
+
+        $requisition = Requisition::findOrFail($id);
+        $requisition->invoice_attachment = $request->file('invoice')->store('invoices', 'public');
+        $requisition->save();
 
         return response()->json($requisition);
     }
