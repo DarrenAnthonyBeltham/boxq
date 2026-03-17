@@ -16,6 +16,7 @@ class Requisition extends Model
         'justification',
         'items',
         'subtotal',
+        'has_tax',
         'tax_amount',
         'total_price',
         'currency',
@@ -27,7 +28,14 @@ class Requisition extends Model
         'reason',
         'attachment',
         'is_over_budget',
-        'invoice_attachment'
+        'invoice_attachment',
+        'invoice_amount',
+        'paid_by',
+        'paid_at',
+        'xendit_disbursement_id',
+        'vendor_bank_code',
+        'vendor_account_number',
+        'vendor_account_name'
     ];
 
     protected $casts = [

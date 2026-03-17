@@ -85,6 +85,12 @@ const router = createRouter({
       component: () => import('../views/procurement/GoodsReceipt.vue'),
       meta: { requiresAuth: true }
     },
+    {
+      path: '/admin/budgets',
+      name: 'admin-budgets',
+      component: () => import('../views/admin/BudgetsAdmin.vue'),
+      meta: { requiresAuth: true }
+    },
   ]
 });
 

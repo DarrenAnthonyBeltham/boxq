@@ -9,6 +9,14 @@ use Carbon\Carbon;
 
 class BudgetController extends Controller
 {
+    public function index(Request $request)
+    {
+        if ($request->user()->role !== 'admin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+        return response()->json(Budget::all());
+    }
+
     public function current(Request $request)
     {
         $department = $request->user()->department;
@@ -29,9 +37,13 @@ class BudgetController extends Controller
 
     public function store(Request $request)
     {
+        if ($request->user()->role !== 'admin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
         $validated = $request->validate([
             'department' => 'required|string',
-            'monthly_limit' => 'required|numeric'
+            'monthly_limit' => 'required|numeric|min:0'
         ]);
 
         $budget = Budget::updateOrCreate(

@@ -103,7 +103,7 @@ onUnmounted(() => {
             
             <ul class="nav nav-pills flex-column mb-auto gap-2 mt-2">
                 <li class="nav-item">
-                    <router-link to="/" class="nav-link text-white d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary fw-bold">
+                    <router-link to="/" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                         Dashboard
                     </router-link>
@@ -136,6 +136,18 @@ onUnmounted(() => {
                     <router-link to="/receipts" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                         Receiving
+                    </router-link>
+                </li>
+                <li class="nav-item" v-if="currentUser.role === 'admin'">
+                    <router-link to="/admin/budgets" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                        Budgets
+                    </router-link>
+                </li>
+                <li class="nav-item" v-if="currentUser.role === 'admin'">
+                    <router-link to="/admin/products" class="nav-link text-secondary d-flex align-items-center gap-3 px-3 py-2 rounded-3" active-class="bg-primary text-white fw-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
+                        Manage Products
                     </router-link>
                 </li>
             </ul>

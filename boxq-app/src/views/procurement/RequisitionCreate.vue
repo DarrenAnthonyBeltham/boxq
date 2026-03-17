@@ -43,6 +43,7 @@ const form = reactive({
     justification: '',
     currency: 'USD',
     exchange_rate: 15500,
+    has_tax: true,
     items: [
         { productId: '', name: '', price: 0, qty: 1, isCustom: false }
     ],
@@ -85,6 +86,7 @@ onMounted(async () => {
             form.justification = targetData.justification || '';
             form.currency = targetData.currency || 'USD';
             form.exchange_rate = targetData.exchange_rate || 15500;
+            form.has_tax = targetData.has_tax !== undefined ? targetData.has_tax : true;
             
             if (targetData.items && targetData.items.length > 0) {
                 form.items = targetData.items.map((item: DraftItem) => {
@@ -107,7 +109,7 @@ onMounted(async () => {
             }
         }
     } catch (error) {
-        console.error(error);
+        console.error("Error loading initial data", error);
     }
 });
 
@@ -155,7 +157,7 @@ const subtotal = computed(() => {
 });
 
 const taxAmount = computed(() => {
-    return subtotal.value * 0.11;
+    return form.has_tax ? (subtotal.value * 0.11) : 0;
 });
 
 const grandTotal = computed(() => {
@@ -213,6 +215,7 @@ const submitRequest = async (targetStatus: 'Pending' | 'Draft') => {
         formData.append('status', targetStatus);
         formData.append('currency', form.currency);
         formData.append('exchange_rate', form.exchange_rate.toString());
+        formData.append('has_tax', form.has_tax ? '1' : '0');
         
         form.items.forEach((item, index) => {
             formData.append(`items[${index}][name]`, item.name || '');
@@ -421,7 +424,10 @@ export default {
                             </div>
 
                             <div class="mb-3 d-flex justify-content-between align-items-center border-bottom pb-3">
-                                <span class="text-muted small fw-bold">VAT / PPN (11%):</span>
+                                <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
+                                    <input class="form-check-input mt-0" type="checkbox" v-model="form.has_tax" id="taxToggle" style="cursor: pointer;">
+                                    <label class="form-check-label text-muted small fw-bold m-0" for="taxToggle" style="cursor: pointer;">Apply VAT / PPN (11%)</label>
+                                </div>
                                 <span class="fw-bold text-dark">{{ form.currency === 'USD' ? '$' : 'Rp' }}{{ taxAmount.toLocaleString(undefined, {minimumFractionDigits: 2}) }}</span>
                             </div>
 

@@ -6,10 +6,13 @@ use App\Http\Controllers\RequisitionController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\XenditWebhookController;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::get('/requisitions/{id}/email-approval', [App\Http\Controllers\RequisitionController::class, 'emailApproval']);
+
+Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handleDisbursement']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -27,7 +30,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/requisitions', [RequisitionController::class, 'store']);
     Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
+    Route::post('/requisitions/{id}/invoice', [RequisitionController::class, 'uploadInvoice']);
 
+    Route::get('/budgets', [App\Http\Controllers\BudgetController::class, 'index']);
     Route::get('/budget/current', [App\Http\Controllers\BudgetController::class, 'current']);
     Route::post('/budgets', [App\Http\Controllers\BudgetController::class, 'store']);
     
