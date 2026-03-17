@@ -26,7 +26,7 @@ class RequisitionController extends Controller
                 $query->where('user_id', $user->id)
                       ->orWhere(function ($subQ) {
                           $subQ->where('approval_stage', 'Finance Director')
-                               ->orWhereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Paid', 'Payment Failed']);
+                               ->orWhereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Payment Failed', 'Reconciled']);
                       });
             })->orderBy('created_at', 'desc')->get();
         } 
@@ -70,7 +70,7 @@ class RequisitionController extends Controller
             'items.*.price' => $isDraft ? 'nullable|numeric|min:0' : 'required|numeric|min:0',
             'items.*.qty' => $isDraft ? 'nullable|integer|min:1' : 'required|integer|min:1',
             'currency' => 'required|string|in:USD,IDR',
-            'exchange_rate' => 'required|numeric|min:1',
+            'exchange_rate' => 'nullable|numeric',
             'cost_centers' => 'required|array|min:1',
             'cost_centers.*.department' => 'required|string',
             'cost_centers.*.percentage' => 'required|numeric|min:1|max:100',
@@ -78,6 +78,13 @@ class RequisitionController extends Controller
             'status' => 'required|string|in:Pending,Draft',
             'has_tax' => 'nullable'
         ]);
+
+        if ($validated['currency'] === 'USD' && (empty($validated['exchange_rate']) || $validated['exchange_rate'] <= 1)) {
+            $fxResponse = Http::get('https://api.exchangerate-api.com/v4/latest/USD');
+            $validated['exchange_rate'] = $fxResponse->successful() ? $fxResponse->json('rates.IDR') : 15500;
+        } else {
+            $validated['exchange_rate'] = $validated['exchange_rate'] ?? 1;
+        }
 
         $hasTax = filter_var($request->input('has_tax', true), FILTER_VALIDATE_BOOLEAN);
 
@@ -100,7 +107,7 @@ class RequisitionController extends Controller
             
             if ($budget) {
                 $currentSpent = Requisition::where('department', $user->department)
-                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Paid'])
+                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Reconciled'])
                     ->where('created_at', '>=', Carbon::now()->startOfMonth())
                     ->sum('total_price');
 
@@ -144,7 +151,8 @@ class RequisitionController extends Controller
             'approval_stage' => $approvalStage,
             'approval_token' => $approvalToken,
             'attachment' => $attachmentPath,
-            'is_over_budget' => $isOverBudget
+            'is_over_budget' => $isOverBudget,
+            'amount_paid' => 0
         ]);
 
         event(new \App\Events\RequisitionSubmitted($requisition));
@@ -174,7 +182,7 @@ class RequisitionController extends Controller
             'items.*.price' => $isDraft ? 'nullable|numeric|min:0' : 'required|numeric|min:0',
             'items.*.qty' => $isDraft ? 'nullable|integer|min:1' : 'required|integer|min:1',
             'currency' => 'required|string|in:USD,IDR',
-            'exchange_rate' => 'required|numeric|min:1',
+            'exchange_rate' => 'nullable|numeric',
             'cost_centers' => 'required|array|min:1',
             'cost_centers.*.department' => 'required|string',
             'cost_centers.*.percentage' => 'required|numeric|min:1|max:100',
@@ -182,6 +190,13 @@ class RequisitionController extends Controller
             'status' => 'required|string|in:Pending,Draft',
             'has_tax' => 'nullable'
         ]);
+
+        if ($validated['currency'] === 'USD' && (empty($validated['exchange_rate']) || $validated['exchange_rate'] <= 1)) {
+            $fxResponse = Http::get('https://api.exchangerate-api.com/v4/latest/USD');
+            $validated['exchange_rate'] = $fxResponse->successful() ? $fxResponse->json('rates.IDR') : 15500;
+        } else {
+            $validated['exchange_rate'] = $validated['exchange_rate'] ?? 1;
+        }
 
         $hasTax = filter_var($request->input('has_tax', true), FILTER_VALIDATE_BOOLEAN);
 
@@ -204,7 +219,7 @@ class RequisitionController extends Controller
             
             if ($budget) {
                 $currentSpent = Requisition::where('department', $user->department)
-                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Paid'])
+                    ->whereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Reconciled'])
                     ->where('created_at', '>=', Carbon::now()->startOfMonth())
                     ->sum('total_price');
 
@@ -268,13 +283,25 @@ class RequisitionController extends Controller
         $user = $request->user();
         
         $validated = $request->validate([
-            'status' => 'required|string|in:Approved,Rejected,Paid',
-            'reason' => 'nullable|string|max:1000'
+            'status' => 'required|string|in:Approved,Rejected,Processing Payment,Reconciled',
+            'reason' => 'nullable|string|max:1000',
+            'payment_amount' => 'nullable|numeric|min:1'
         ]);
 
         $requisition = Requisition::findOrFail($id);
         
         $usdTotal = $requisition->currency === 'IDR' ? ($requisition->total_price / $requisition->exchange_rate) : $requisition->total_price;
+
+        if ($validated['status'] === 'Reconciled') {
+            if (!in_array($user->role, ['finance', 'admin'])) {
+                return response()->json(['message' => 'Unauthorized. Finance or Admin required.'], 403);
+            }
+            $requisition->status = 'Reconciled';
+            $requisition->reconciled_by = $user->name;
+            $requisition->reconciled_at = Carbon::now()->toIso8601String();
+            $requisition->save();
+            return response()->json($requisition);
+        }
 
         if ($validated['status'] === 'Rejected') {
             $requisition->status = 'Rejected';
@@ -285,7 +312,7 @@ class RequisitionController extends Controller
             return response()->json($requisition);
         }
 
-        if ($validated['status'] === 'Paid') {
+        if ($validated['status'] === 'Processing Payment') {
             if (!in_array($user->role, ['finance', 'admin', 'manager'])) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
@@ -293,9 +320,7 @@ class RequisitionController extends Controller
                 return response()->json(['message' => 'Backend Security Block: Missing invoice or vendor bank details.'], 422);
             }
 
-            $idrAmount = $requisition->currency === 'IDR' 
-                ? ($requisition->invoice_amount ?? $requisition->total_price) 
-                : (($requisition->invoice_amount ?? $requisition->total_price) * $requisition->exchange_rate);
+            $amountToPayIDR = (int) round($request->input('payment_amount'));
 
             $xenditSecretKey = env('XENDIT_SECRET_KEY');
             
@@ -306,7 +331,7 @@ class RequisitionController extends Controller
                     'account_holder_name' => $requisition->vendor_account_name,
                     'account_number' => $requisition->vendor_account_number,
                     'description' => 'Payment for Requisition: ' . Str::limit($requisition->justification, 50),
-                    'amount' => (int) round($idrAmount)
+                    'amount' => $amountToPayIDR
                 ]);
 
             if ($response->failed()) {
@@ -317,6 +342,7 @@ class RequisitionController extends Controller
 
             $xenditData = $response->json();
             $requisition->xendit_disbursement_id = $xenditData['id'] ?? null;
+            $requisition->amount_paid = ($requisition->amount_paid ?? 0) + $amountToPayIDR;
             $requisition->status = 'Processing Payment';
             $requisition->paid_by = $user->name;
             $requisition->paid_at = Carbon::now()->toIso8601String();

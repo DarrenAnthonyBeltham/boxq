@@ -12,9 +12,9 @@ class XenditWebhookController extends Controller
     {
         $xenditToken = env('XENDIT_WEBHOOK_TOKEN');
 
-        if ($request->header('x-callback-token') !== $xenditToken && !empty($xenditToken)) {
+        if (empty($xenditToken) || $request->header('x-callback-token') !== $xenditToken) {
             Log::warning('Unauthorized Xendit Webhook Attempt', ['ip' => $request->ip()]);
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return response()->json(['message' => 'Unauthorized Webhook Signature'], 403);
         }
 
         $externalId = $request->input('external_id');
@@ -32,7 +32,15 @@ class XenditWebhookController extends Controller
 
             if ($requisition) {
                 if ($status === 'COMPLETED') {
-                    $requisition->status = 'Paid';
+                    $targetAmount = $requisition->currency === 'IDR' 
+                        ? ($requisition->invoice_amount ?? $requisition->total_price) 
+                        : (($requisition->invoice_amount ?? $requisition->total_price) * $requisition->exchange_rate);
+
+                    if ($requisition->amount_paid >= $targetAmount) {
+                        $requisition->status = 'Paid';
+                    } else {
+                        $requisition->status = 'Partially Paid';
+                    }
                 } elseif ($status === 'FAILED') {
                     $requisition->status = 'Payment Failed';
                 }

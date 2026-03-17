@@ -63,7 +63,7 @@ const accountNumberInput = ref('');
 const accountNameInput = ref('');
 const isUploadingInvoice = ref(false);
 const paymentNotes = ref('');
-let pollingInterval: any = null;
+let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
 const indonesianBanks = [
     { code: 'BCA', name: 'Bank Central Asia (BCA)' },

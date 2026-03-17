@@ -35,7 +35,10 @@ class Requisition extends Model
         'xendit_disbursement_id',
         'vendor_bank_code',
         'vendor_account_number',
-        'vendor_account_name'
+        'vendor_account_name',
+        'amount_paid',
+        'reconciled_by',
+        'reconciled_at'
     ];
 
     protected $casts = [
