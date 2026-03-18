@@ -22,10 +22,20 @@ const handleLogin = async () => {
         
         router.push('/');
     } catch (error) {
-        if (axios.isAxiosError(error) && error.response && error.response.status === 422) {
-            errorMessage.value = "Incorrect email or password.";
+        if (axios.isAxiosError(error) && error.response) {
+            const status = error.response.status;
+            
+            if (status === 404) {
+                errorMessage.value = "No account found for this email address.";
+            } else if (status === 401) {
+                errorMessage.value = "Incorrect password.";
+            } else if (status === 500) {
+                errorMessage.value = "500 Internal Server Error. Check backend logs.";
+            } else {
+                errorMessage.value = error.response.data?.message || "Login failed. Please try again.";
+            }
         } else {
-            errorMessage.value = "Server error. Please try again.";
+            errorMessage.value = "Network error. Please check your connection.";
         }
     }
 };
@@ -47,7 +57,7 @@ export default {
                     <p class="text-muted small">Sign in to access BoxQ Procurement.</p>
                 </div>
 
-                <div v-if="errorMessage" class="alert alert-danger py-2 small text-center">
+                <div v-if="errorMessage" class="alert alert-danger py-2 small text-center fw-bold">
                     {{ errorMessage }}
                 </div>
 

@@ -2,35 +2,39 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use MongoDB\Laravel\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use Notifiable;
+
+    protected $connection = 'mongodb';
+    protected $collection = 'users';
 
     protected $fillable = [
         'name',
         'email',
         'password',
-        'role',
         'department',
+        'role',
         'delegated_to_id',
         'delegation_start',
-        'delegation_end'
+        'delegation_end',
+        'api_token'
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'api_token'
     ];
 
-    protected $casts = [
-        'email_verified_at' => 'datetime',
-        'password' => 'hashed',
-        'delegation_start' => 'datetime',
-        'delegation_end' => 'datetime'
-    ];
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+        ];
+    }
 }

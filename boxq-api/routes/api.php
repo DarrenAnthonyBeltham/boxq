@@ -7,6 +7,8 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\XenditWebhookController;
+use App\Http\Controllers\AnalyticsController;
+use App\Http\Middleware\MongoAuthMiddleware;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -14,7 +16,7 @@ Route::get('/requisitions/{id}/email-approval', [App\Http\Controllers\Requisitio
 
 Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handleDisbursement']);
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     
     Route::get('/user', function (Request $request) {
@@ -40,6 +42,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'index']);
     Route::post('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'store']);
+
+    Route::get('/analytics/dashboard', [AnalyticsController::class, 'dashboard']);
+    Route::get('/analytics/export', [AnalyticsController::class, 'exportCsv']);
+    Route::get('/requisitions/{id}/audit-logs', [AnalyticsController::class, 'auditLogs']);
 
     Route::get('/vendors', [App\Http\Controllers\VendorController::class, 'index']);
     Route::post('/vendors', [App\Http\Controllers\VendorController::class, 'store']);
