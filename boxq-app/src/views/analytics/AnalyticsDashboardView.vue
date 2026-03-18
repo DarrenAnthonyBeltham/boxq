@@ -2,10 +2,10 @@
 import { ref, onMounted } from 'vue';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
-import { Bar, Doughnut } from 'vue-chartjs';
-import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement } from 'chart.js';
+import { Bar, Doughnut, Line } from 'vue-chartjs';
+import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement, LineElement, PointElement } from 'chart.js';
 
-ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement);
+ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement, LineElement, PointElement);
 
 interface Anomaly {
     type: string;
@@ -15,6 +15,10 @@ interface Anomaly {
 
 interface DashboardStats {
     total_spent_this_month_usd: number;
+    projected_total_month_spend: number;
+    trend_labels: string[];
+    actual_trend: (number | null)[];
+    projected_trend: (number | null)[];
     spending_by_department: Record<string, number>;
     vendor_analysis: Record<string, number>;
     top_items: Record<string, number>;
@@ -25,11 +29,23 @@ interface DashboardStats {
 const loading = ref(true);
 const stats = ref<DashboardStats>({
     total_spent_this_month_usd: 0,
+    projected_total_month_spend: 0,
+    trend_labels: [],
+    actual_trend: [],
+    projected_trend: [],
     spending_by_department: {},
     vendor_analysis: {},
     top_items: {},
     avg_cycle_time_days: 0,
     anomalies: []
+});
+
+const lineChartData = ref({
+    labels: [] as string[],
+    datasets: [
+        { label: 'Actual Spend (USD)', borderColor: '#0d6efd', backgroundColor: '#0d6efd', data: [] as (number | null)[], tension: 0.3 },
+        { label: 'Projected Spend (USD)', borderColor: '#6c757d', backgroundColor: '#6c757d', borderDash: [5, 5], data: [] as (number | null)[], tension: 0.3 }
+    ]
 });
 
 const barChartData = ref({
@@ -52,6 +68,12 @@ onMounted(async () => {
     try {
         const response = await api.get('/analytics/dashboard');
         stats.value = response.data;
+
+        lineChartData.value.labels = stats.value.trend_labels || [];
+        if (lineChartData.value.datasets[0] && lineChartData.value.datasets[1]) {
+            lineChartData.value.datasets[0].data = stats.value.actual_trend || [];
+            lineChartData.value.datasets[1].data = stats.value.projected_trend || [];
+        }
 
         const deptSpending = stats.value.spending_by_department || {};
         barChartData.value.labels = Object.keys(deptSpending);
@@ -113,19 +135,27 @@ export default { name: 'AnalyticsDashboardView' }
 
         <div v-else>
             <div class="row mb-4">
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <div class="card border-0 shadow-sm bg-primary text-white h-100">
                         <div class="card-body p-4 d-flex flex-column justify-content-center">
                             <h6 class="text-uppercase fw-bold opacity-75 mb-1">Total MTD Spend</h6>
-                            <h2 class="fw-bold mb-0 display-5">{{ formatCurrency(stats.total_spent_this_month_usd) }}</h2>
+                            <h2 class="fw-bold mb-0 display-6">{{ formatCurrency(stats.total_spent_this_month_usd) }}</h2>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm bg-dark text-white h-100">
+                        <div class="card-body p-4 d-flex flex-column justify-content-center">
+                            <h6 class="text-uppercase fw-bold opacity-75 mb-1">EOM Projected Spend</h6>
+                            <h2 class="fw-bold mb-0 display-6 text-info">{{ formatCurrency(stats.projected_total_month_spend) }}</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
                     <div class="card border-0 shadow-sm bg-white h-100">
                         <div class="card-body p-4 d-flex flex-column justify-content-center align-items-center text-center">
                             <h6 class="text-uppercase text-muted fw-bold mb-1">Avg Cycle Time (Req to Pay)</h6>
-                            <h2 class="fw-bold text-dark mb-0 display-5">{{ stats.avg_cycle_time_days }} <span class="fs-5 text-muted">Days</span></h2>
+                            <h2 class="fw-bold text-dark mb-0 display-6">{{ stats.avg_cycle_time_days }} <span class="fs-5 text-muted">Days</span></h2>
                         </div>
                     </div>
                 </div>
@@ -138,6 +168,15 @@ export default { name: 'AnalyticsDashboardView' }
                         <strong>{{ anomaly.type }}:</strong> {{ anomaly.description }}
                     </li>
                 </ul>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <h6 class="fw-bold text-dark mb-4">Budget Burn Rate & Forecast</h6>
+                    <div style="height: 350px;">
+                        <Line v-if="lineChartData.labels.length" :data="lineChartData" :options="chartOptions" />
+                    </div>
+                </div>
             </div>
 
             <div class="row mb-4">

@@ -11,7 +11,11 @@ class AnalyticsController extends Controller
 {
     public function dashboard(Request $request)
     {
-        $monthStart = Carbon::now()->startOfMonth();
+        $now = Carbon::now();
+        $monthStart = $now->copy()->startOfMonth();
+        $daysInMonth = $now->daysInMonth;
+        $currentDay = $now->day;
+
         $allRequisitions = Requisition::all();
 
         $allRequisitions->map(function ($req) {
@@ -24,6 +28,41 @@ class AnalyticsController extends Controller
         $spentThisMonth = $allRequisitions->where('created_at', '>=', $monthStart)
             ->whereIn('status', $validStatuses)
             ->sum('usd_value');
+
+        $dailySpends = array_fill(1, $daysInMonth, 0);
+        foreach ($allRequisitions->where('created_at', '>=', $monthStart)->whereIn('status', $validStatuses) as $req) {
+            $day = Carbon::parse($req->created_at)->day;
+            $dailySpends[$day] += $req->usd_value;
+        }
+
+        $cumulative = 0;
+        $actualTrend = [];
+        $projectedTrend = [];
+        $labels = [];
+
+        for ($i = 1; $i <= $daysInMonth; $i++) {
+            $labels[] = 'Day ' . $i;
+            if ($i <= $currentDay) {
+                $cumulative += $dailySpends[$i];
+                $actualTrend[] = round($cumulative, 2);
+                $projectedTrend[] = null;
+            } else {
+                $actualTrend[] = null;
+            }
+        }
+
+        $runRate = $currentDay > 0 ? ($cumulative / $currentDay) : 0;
+        $projectedTotal = $runRate * $daysInMonth;
+
+        $projectedCumulative = $cumulative;
+        if ($currentDay > 0) {
+            $projectedTrend[$currentDay - 1] = round($cumulative, 2);
+        }
+        
+        for ($i = $currentDay + 1; $i <= $daysInMonth; $i++) {
+            $projectedCumulative += $runRate;
+            $projectedTrend[] = round($projectedCumulative, 2);
+        }
 
         $spendingByDept = $allRequisitions->whereIn('status', $validStatuses)
             ->groupBy('department')
@@ -75,6 +114,10 @@ class AnalyticsController extends Controller
 
         return response()->json([
             'total_spent_this_month_usd' => round($spentThisMonth, 2),
+            'projected_total_month_spend' => round($projectedTotal, 2),
+            'trend_labels' => $labels,
+            'actual_trend' => $actualTrend,
+            'projected_trend' => $projectedTrend,
             'spending_by_department' => $spendingByDept,
             'vendor_analysis' => $vendorAnalysis,
             'top_items' => $topCategories,
