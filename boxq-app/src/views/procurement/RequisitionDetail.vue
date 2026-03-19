@@ -80,12 +80,27 @@ const fetchAuditLogs = async () => {
         const response = await api.get(`/requisitions/${route.params.id}/audit-logs`);
         auditLogs.value = response.data;
     } catch (error) {
-        console.error(error);
     }
 };
 
 const cloneRequest = () => {
     if (requisition.value) router.push(`/create?clone_id=${requisition.value._id || requisition.value.id}`);
+};
+
+const downloadPo = async () => {
+    try {
+        const reqId = String(route.params.id);
+        const response = await api.get(`/requisitions/${reqId}/po`, { responseType: 'blob' });
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `PO-${reqId.slice(-8).toUpperCase()}.pdf`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (error) {
+        alert("Failed to generate PDF.");
+    }
 };
 
 const hasVariance = computed(() => {
@@ -181,7 +196,10 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                 <button @click="router.push('/')" class="btn btn-outline-secondary"><i class="fa-solid fa-arrow-left"></i></button>
                 <div><h3 class="fw-bold text-dark mb-0">Requisition Details</h3><p class="text-muted mb-0 small">Review and process the purchase request.</p></div>
             </div>
-            <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm"><i class="fa-solid fa-copy me-2"></i>Clone Request</button>
+            <div class="d-flex gap-2">
+                <button v-if="isPOMatch" @click="downloadPo" class="btn btn-dark shadow-sm"><i class="fa-solid fa-file-pdf me-2"></i>Download PO</button>
+                <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm"><i class="fa-solid fa-copy me-2"></i>Clone Request</button>
+            </div>
         </div>
 
         <div v-if="loading" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>

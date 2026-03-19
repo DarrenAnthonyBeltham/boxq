@@ -33,6 +33,7 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
     Route::post('/requisitions/{id}/invoice', [RequisitionController::class, 'uploadInvoice']);
+    Route::get('/requisitions/{id}/po', [RequisitionController::class, 'downloadPoPdf']);
 
     Route::get('/budgets', [App\Http\Controllers\BudgetController::class, 'index']);
     Route::get('/budget/current', [App\Http\Controllers\BudgetController::class, 'current']);

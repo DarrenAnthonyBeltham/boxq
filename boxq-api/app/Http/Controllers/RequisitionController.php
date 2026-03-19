@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Http;
 use App\Mail\ManagerApprovalEmail;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 
 class RequisitionController extends Controller
@@ -162,6 +163,35 @@ class RequisitionController extends Controller
         }
 
         return response()->json($requisition, 201);
+    }
+
+    public function downloadPoPdf($id)
+    {
+        $requisition = Requisition::findOrFail($id);
+
+        $po = (object) [
+            'po_number' => 'PO-' . strtoupper(substr($requisition->id, -8)),
+            'created_at' => $requisition->created_at,
+            'total_amount' => $requisition->total_price,
+        ];
+
+        $vendor = (object) [
+            'name' => $requisition->vendor_account_name ?? 'N/A',
+            'address' => $requisition->vendor_address ?? 'N/A',
+            'email' => $requisition->vendor_email ?? 'N/A',
+            'tax_id' => $requisition->vendor_tax_id ?? 'N/A',
+            'payment_terms' => $requisition->vendor_payment_terms ?? 'N/A',
+        ];
+
+        $pdf = Pdf::loadView('pdf.po', compact('requisition', 'po', 'vendor'));
+        
+        $filename = $po->po_number . '.pdf';
+
+        return response()->streamDownload(function () use ($pdf) {
+            echo $pdf->output();
+        }, $filename, [
+            'Content-Type' => 'application/pdf',
+        ]);
     }
 
     public function update(Request $request, $id)
