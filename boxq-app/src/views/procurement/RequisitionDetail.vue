@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useToast } from 'vue-toastification';
 import axios from 'axios';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
@@ -19,6 +20,7 @@ interface Requisition {
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 const requisition = ref<Requisition | null>(null);
 const auditLogs = ref<AuditLog[]>([]);
 const loading = ref(true);
@@ -69,6 +71,7 @@ const fetchRequisition = async () => {
             if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
         }
     } catch (error) {
+        toast.error("Failed to load requisition details.");
         if (!pollingInterval) router.push('/');
     } finally {
         loading.value = false;
@@ -89,6 +92,7 @@ const cloneRequest = () => {
 
 const downloadPo = async () => {
     try {
+        toast.info("Generating PDF Document...");
         const reqId = String(route.params.id);
         const response = await api.get(`/requisitions/${reqId}/po`, { responseType: 'blob' });
         const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -98,8 +102,9 @@ const downloadPo = async () => {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        toast.success("Purchase Order Downloaded!");
     } catch (error) {
-        alert("Failed to generate PDF.");
+        toast.error("Failed to generate PDF.");
     }
 };
 
@@ -108,8 +113,23 @@ const hasVariance = computed(() => {
     return Math.abs(requisition.value.invoice_amount - requisition.value.total_price) > 0.01;
 });
 
+const canApprove = computed(() => {
+    if (!requisition.value || requisition.value.status !== 'Pending') return false;
+    const role = currentUser.value.role;
+    const stage = requisition.value.approval_stage;
+    
+    if (role === 'admin') return true;
+    if (role === 'manager' && stage === 'Manager') return true;
+    if (role === 'finance' && stage === 'Finance Director') return true;
+    
+    return false;
+});
+
 const updateStatus = async (newStatus: string) => {
-    if (newStatus === 'Rejected' && !rejectReason.value) { alert("Please provide a reason for rejection."); return; }
+    if (newStatus === 'Rejected' && !rejectReason.value) { 
+        toast.warning("Please provide a reason for rejection."); 
+        return; 
+    }
     
     const payload: Record<string, string | number | null> = { 
         status: newStatus, 
@@ -117,7 +137,10 @@ const updateStatus = async (newStatus: string) => {
     };
     
     if (newStatus === 'Processing Payment') {
-        if (!partialPaymentAmount.value || partialPaymentAmount.value <= 0) { alert("Invalid payment amount."); return; }
+        if (!partialPaymentAmount.value || partialPaymentAmount.value <= 0) { 
+            toast.warning("Invalid payment amount."); 
+            return; 
+        }
         payload.payment_amount = partialPaymentAmount.value;
         if (hasVariance.value) payload.reason = `Payment Note: ${paymentNotes.value}`;
     }
@@ -125,14 +148,15 @@ const updateStatus = async (newStatus: string) => {
     isProcessing.value = true;
     try {
         await api.patch(`/requisitions/${route.params.id}/status`, payload);
+        toast.success(`Requisition marked as ${newStatus}`);
         await fetchRequisition();
         await fetchAuditLogs();
         showRejectInput.value = false; rejectReason.value = ''; paymentNotes.value = '';
     } catch (error: unknown) {
         if (axios.isAxiosError(error)) {
-            alert(error.response?.data?.message || "Failed to update status.");
+            toast.error(error.response?.data?.message || "Failed to update status.");
         } else {
-            alert("Failed to update status.");
+            toast.error("Failed to update status.");
         }
     } finally {
         isProcessing.value = false;
@@ -146,7 +170,8 @@ const handleInvoiceSelect = (event: Event) => {
 
 const submitInvoice = async () => {
     if (!invoiceFile.value || !invoiceAmountInput.value || !bankCodeInput.value || !accountNumberInput.value || !accountNameInput.value) {
-        alert("Please complete all invoice and bank details."); return;
+        toast.warning("Please complete all invoice and bank details."); 
+        return;
     }
     isUploadingInvoice.value = true;
     try {
@@ -157,12 +182,13 @@ const submitInvoice = async () => {
         formData.append('vendor_account_number', accountNumberInput.value);
         formData.append('vendor_account_name', accountNameInput.value);
         await api.post(`/requisitions/${route.params.id}/invoice`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        toast.success("Invoice and Vendor Bank details locked successfully!");
         await fetchRequisition();
         await fetchAuditLogs();
         invoiceFile.value = null; invoiceAmountInput.value = null; bankCodeInput.value = ''; accountNumberInput.value = ''; accountNameInput.value = '';
         const fileInput = document.getElementById('invoiceUpload') as HTMLInputElement; if (fileInput) fileInput.value = '';
     } catch (error) {
-        alert("Failed to upload invoice.");
+        toast.error("Failed to upload invoice.");
     } finally {
         isUploadingInvoice.value = false;
     }
@@ -198,6 +224,8 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
             </div>
             <div class="d-flex gap-2">
                 <button v-if="isPOMatch" @click="downloadPo" class="btn btn-dark shadow-sm"><i class="fa-solid fa-file-pdf me-2"></i>Download PO</button>
+                <button v-if="canApprove" @click="updateStatus('Approved')" class="btn btn-success fw-bold shadow-sm">Approve</button>
+                <button v-if="canApprove" @click="showRejectInput = true" class="btn btn-danger fw-bold shadow-sm">Reject</button>
                 <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm"><i class="fa-solid fa-copy me-2"></i>Clone Request</button>
             </div>
         </div>
@@ -264,19 +292,19 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
             </div>
 
             <div class="col-lg-4">
-                <div v-if="requisition.status === 'Pending' && ((currentUser.role === 'manager' && requisition.approval_stage === 'Manager') || (currentUser.role === 'admin' && requisition.approval_stage === 'VP') || (currentUser.role === 'finance' && requisition.approval_stage === 'Finance Director'))" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
+                <div v-if="canApprove" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
                     <div class="card-body p-4">
                         <h6 class="fw-bold mb-3">{{ requisition.approval_stage }} Action Required</h6>
                         <p class="small text-muted mb-4">Review the justification and attached files before making a decision.</p>
                         <div v-if="!showRejectInput" class="d-flex gap-2">
-                            <button @click="updateStatus('Approved')" class="btn btn-success flex-grow-1 fw-bold" :disabled="isProcessing"><i class="fa-solid fa-check me-1"></i> Approve</button>
+                            <button @click="updateStatus('Approved')" class="btn btn-success flex-grow-1 fw-bold" :disabled="isProcessing"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-check me-1"></i> Approve</button>
                             <button @click="showRejectInput = true" class="btn btn-outline-danger flex-grow-1 fw-bold" :disabled="isProcessing"><i class="fa-solid fa-xmark me-1"></i> Reject</button>
                         </div>
                         <div v-else class="animate__animated animate__fadeIn">
                             <label class="form-label small fw-bold text-danger">Reason for Rejection</label>
                             <textarea v-model="rejectReason" class="form-control mb-3" rows="3" placeholder="Explain why this was rejected..." required></textarea>
                             <div class="d-flex gap-2">
-                                <button @click="updateStatus('Rejected')" class="btn btn-danger flex-grow-1" :disabled="isProcessing || !rejectReason">Confirm Reject</button>
+                                <button @click="updateStatus('Rejected')" class="btn btn-danger flex-grow-1" :disabled="isProcessing || !rejectReason"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span>Confirm Reject</button>
                                 <button @click="showRejectInput = false" class="btn btn-light text-muted" :disabled="isProcessing">Cancel</button>
                             </div>
                         </div>
@@ -297,7 +325,7 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                                 <div class="d-flex justify-content-between mb-2"><span class="text-muted fw-bold">Bank Reference:</span><span class="fw-bold">{{ requisition.vendor_bank_code }} - {{ requisition.vendor_account_number }}</span></div>
                                 <div class="d-flex justify-content-between align-items-center mt-3 border-top pt-2 border-success border-opacity-25"><span class="text-muted fw-bold">Final Amount Paid:</span><span class="fw-bold fs-6 text-success">Rp{{ Number(requisition.amount_paid).toLocaleString() }}</span></div>
                             </div>
-                            <div v-if="['finance', 'admin'].includes(currentUser.role)" class="mt-4 pt-3 border-top"><button @click="updateStatus('Reconciled')" class="btn btn-dark w-100 fw-bold shadow-sm" :disabled="isProcessing"><i class="fa-solid fa-file-signature me-2"></i> Mark as Reconciled</button><p class="small text-muted text-center mt-2 mb-0">Click only after verifying the bank statement.</p></div>
+                            <div v-if="['finance', 'admin'].includes(currentUser.role)" class="mt-4 pt-3 border-top"><button @click="updateStatus('Reconciled')" class="btn btn-dark w-100 fw-bold shadow-sm" :disabled="isProcessing"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-file-signature me-2"></i> Mark as Reconciled</button><p class="small text-muted text-center mt-2 mb-0">Click only after verifying the bank statement.</p></div>
                         </div>
                         
                         <div v-else-if="requisition.status === 'Processing Payment'" class="alert alert-warning border-0 mb-0 text-start shadow-sm bg-warning bg-opacity-10">
@@ -307,7 +335,7 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
 
                         <div v-else-if="requisition.status === 'Payment Failed'" class="alert alert-danger border-0 mb-0 text-start shadow-sm bg-danger bg-opacity-10">
                             <div class="d-flex align-items-center mb-3 border-bottom border-danger border-opacity-25 pb-3"><div class="bg-danger text-white rounded-circle d-flex justify-content-center align-items-center me-3" style="width: 42px; height: 42px;"><i class="fa-solid fa-triangle-exclamation fs-5"></i></div><div><h6 class="fw-bold text-danger mb-0">Bank Transfer Failed</h6><span class="small text-muted">Please check vendor details and retry.</span></div></div>
-                            <button @click="updateStatus('Processing Payment')" class="btn btn-danger w-100 fw-bold py-2 shadow-sm mt-2" :disabled="isProcessing"><i class="fa-solid fa-rotate-right me-2"></i> Retry Payment</button>
+                            <button @click="updateStatus('Processing Payment')" class="btn btn-danger w-100 fw-bold py-2 shadow-sm mt-2" :disabled="isProcessing"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-rotate-right me-2"></i> Retry Payment</button>
                         </div>
                         
                         <div v-else>
@@ -338,7 +366,7 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                                 <div class="d-flex justify-content-between mb-2 small fw-bold"><span class="text-muted">Total Paid to Date:</span><span class="text-primary">Rp{{ Number(requisition.amount_paid || 0).toLocaleString() }}</span></div>
                                 <div class="input-group mb-3 shadow-sm"><span class="input-group-text bg-white text-dark fw-bold">Pay Now (Rp)</span><input type="number" v-model="partialPaymentAmount" class="form-control fw-bold text-end" step="1"></div>
                                 <div v-if="hasVariance" class="alert alert-warning border-warning border-2 bg-warning bg-opacity-10 p-3 mb-3"><h6 class="fw-bold text-dark mb-1"><i class="fa-solid fa-triangle-exclamation text-warning me-2"></i>Price Variance Detected</h6><p class="small text-muted mb-2">The uploaded invoice amount differs from the requested total. Please provide a justification.</p><textarea v-model="paymentNotes" class="form-control border-warning shadow-sm bg-white" rows="2" placeholder="Explain the price difference..." required></textarea></div>
-                                <button @click="updateStatus('Processing Payment')" class="btn btn-primary w-100 fw-bold py-3 text-white transition-all shadow-sm" :disabled="isProcessing || !canSubmitPayment"><i class="fa-solid fa-money-bill-transfer me-2"></i> Initiate Transfer to {{ requisition.vendor_bank_code }}</button>
+                                <button @click="updateStatus('Processing Payment')" class="btn btn-primary w-100 fw-bold py-3 text-white transition-all shadow-sm" :disabled="isProcessing || !canSubmitPayment"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-money-bill-transfer me-2"></i> Initiate Transfer to {{ requisition.vendor_bank_code }}</button>
                             </div>
                             <button v-else class="btn btn-secondary w-100 fw-bold py-3 text-white transition-all disabled"><i class="fa-solid fa-lock me-2"></i> Complete Match to Pay</button>
                         </div>

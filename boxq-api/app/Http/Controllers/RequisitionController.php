@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Requisition;
 use App\Models\User;
 use App\Models\Budget;
+use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
@@ -80,6 +81,8 @@ class RequisitionController extends Controller
             'has_tax' => 'nullable'
         ]);
 
+        $safeJustification = strip_tags($validated['justification'] ?? '');
+
         if ($validated['currency'] === 'USD' && (empty($validated['exchange_rate']) || $validated['exchange_rate'] <= 1)) {
             $fxResponse = Http::get('https://api.exchangerate-api.com/v4/latest/USD');
             $validated['exchange_rate'] = $fxResponse->successful() ? $fxResponse->json('rates.IDR') : 15500;
@@ -139,7 +142,7 @@ class RequisitionController extends Controller
             'user_id' => $user->id,
             'requester' => $user->name,
             'department' => $user->department,
-            'justification' => $validated['justification'] ?? '',
+            'justification' => $safeJustification,
             'items' => $validated['items'],
             'subtotal' => $subtotal,
             'has_tax' => $hasTax,
@@ -156,13 +159,57 @@ class RequisitionController extends Controller
             'amount_paid' => 0
         ]);
 
-        event(new \App\Events\RequisitionSubmitted($requisition));
+        if ($status !== 'Draft') {
+            $this->dispatchNewRequisitionNotifications($requisition, $user);
+        }
 
         if ($approvalToken) {
-            Mail::to('darrenanthonybeltham@gmail.com')->send(new ManagerApprovalEmail($requisition));
+            Mail::to('darrenanthonybeltham@gmail.com')->queue(new ManagerApprovalEmail($requisition));
         }
 
         return response()->json($requisition, 201);
+    }
+
+    private function dispatchNewRequisitionNotifications($requisition, $requester)
+    {
+        $admins = User::where('role', 'admin')->get();
+        foreach ($admins as $admin) {
+            Notification::create([
+                'user_id' => $admin->id,
+                'title' => 'New Requisition Created',
+                'message' => "{$requester->name} ({$requester->department}) requested {$requisition->currency} " . number_format($requisition->total_price),
+                'type' => 'info',
+                'link' => "/requisitions/{$requisition->id}",
+                'is_read' => false
+            ]);
+        }
+
+        if ($requisition->approval_stage === 'Manager') {
+            $managers = User::where('role', 'manager')->where('department', $requester->department)->get();
+            foreach ($managers as $manager) {
+                Notification::create([
+                    'user_id' => $manager->id,
+                    'title' => 'Action Required: Manager Approval',
+                    'message' => "A request from {$requester->name} requires your review.",
+                    'type' => 'warning',
+                    'link' => "/requisitions/{$requisition->id}",
+                    'is_read' => false
+                ]);
+            }
+        } 
+        elseif ($requisition->status === 'Approved') {
+            $financeUsers = User::where('role', 'finance')->get();
+            foreach ($financeUsers as $finance) {
+                Notification::create([
+                    'user_id' => $finance->id,
+                    'title' => 'Auto-Approved Request',
+                    'message' => "A request from {$requester->department} was auto-approved and needs PO processing.",
+                    'type' => 'success',
+                    'link' => "/requisitions/{$requisition->id}",
+                    'is_read' => false
+                ]);
+            }
+        }
     }
 
     public function downloadPoPdf($id)
@@ -221,6 +268,8 @@ class RequisitionController extends Controller
             'has_tax' => 'nullable'
         ]);
 
+        $safeJustification = strip_tags($validated['justification'] ?? '');
+
         if ($validated['currency'] === 'USD' && (empty($validated['exchange_rate']) || $validated['exchange_rate'] <= 1)) {
             $fxResponse = Http::get('https://api.exchangerate-api.com/v4/latest/USD');
             $validated['exchange_rate'] = $fxResponse->successful() ? $fxResponse->json('rates.IDR') : 15500;
@@ -275,7 +324,7 @@ class RequisitionController extends Controller
             $requisition->attachment = $request->file('attachment')->store('attachments', 'public');
         }
 
-        $requisition->justification = $validated['justification'] ?? '';
+        $requisition->justification = $safeJustification;
         $requisition->items = $validated['items'];
         $requisition->subtotal = $subtotal;
         $requisition->has_tax = $hasTax;
@@ -290,8 +339,12 @@ class RequisitionController extends Controller
         $requisition->is_over_budget = $isOverBudget;
         $requisition->save();
 
+        if ($status !== 'Draft') {
+            $this->dispatchNewRequisitionNotifications($requisition, $user);
+        }
+
         if ($approvalToken) {
-            Mail::to('darrenanthonybeltham@gmail.com')->send(new ManagerApprovalEmail($requisition));
+            Mail::to('darrenanthonybeltham@gmail.com')->queue(new ManagerApprovalEmail($requisition));
         }
 
         return response()->json($requisition);
@@ -319,8 +372,24 @@ class RequisitionController extends Controller
         ]);
 
         $requisition = Requisition::findOrFail($id);
+
+        if (in_array($validated['status'], ['Approved', 'Rejected'])) {
+            $isAuthorized = false;
+            if ($user->role === 'admin') {
+                $isAuthorized = true;
+            } elseif ($user->role === 'manager' && $requisition->approval_stage === 'Manager') {
+                $isAuthorized = true;
+            } elseif ($user->role === 'finance' && $requisition->approval_stage === 'Finance Director') {
+                $isAuthorized = true;
+            }
+
+            if (!$isAuthorized) {
+                return response()->json(['message' => 'Unauthorized. You do not have permission for this stage.'], 403);
+            }
+        }
         
         $usdTotal = $requisition->currency === 'IDR' ? ($requisition->total_price / $requisition->exchange_rate) : $requisition->total_price;
+        $safeReason = strip_tags($validated['reason'] ?? '');
 
         if ($validated['status'] === 'Reconciled') {
             if (!in_array($user->role, ['finance', 'admin'])) {
@@ -330,6 +399,16 @@ class RequisitionController extends Controller
             $requisition->reconciled_by = $user->name;
             $requisition->reconciled_at = Carbon::now()->toIso8601String();
             $requisition->save();
+
+            Notification::create([
+                'user_id' => $requisition->user_id,
+                'title' => 'Requisition Fully Reconciled',
+                'message' => 'Your request lifecycle is complete and reconciled.',
+                'type' => 'success',
+                'link' => '/requisitions/' . $requisition->id,
+                'is_read' => false
+            ]);
+
             return response()->json($requisition);
         }
 
@@ -337,13 +416,23 @@ class RequisitionController extends Controller
             $requisition->status = 'Rejected';
             $requisition->approval_stage = 'Rejected';
             $requisition->approval_token = null;
-            $requisition->reason = $validated['reason'] ?? 'Rejected by ' . $user->name;
+            $requisition->reason = $safeReason ?: 'Rejected by ' . $user->name;
             $requisition->save();
+
+            Notification::create([
+                'user_id' => $requisition->user_id,
+                'title' => 'Requisition Rejected',
+                'message' => 'Your request was rejected by ' . $user->name,
+                'type' => 'danger',
+                'link' => '/requisitions/' . $requisition->id,
+                'is_read' => false
+            ]);
+
             return response()->json($requisition);
         }
 
         if ($validated['status'] === 'Processing Payment') {
-            if (!in_array($user->role, ['finance', 'admin', 'manager'])) {
+            if (!in_array($user->role, ['finance', 'admin'])) {
                 return response()->json(['message' => 'Unauthorized'], 403);
             }
             if (empty($requisition->invoice_attachment) || empty($requisition->vendor_account_number)) {
@@ -377,11 +466,21 @@ class RequisitionController extends Controller
             $requisition->paid_by = $user->name;
             $requisition->paid_at = Carbon::now()->toIso8601String();
             
-            if (isset($validated['reason']) && !empty($validated['reason'])) {
-                $requisition->reason = $validated['reason'];
+            if (!empty($safeReason)) {
+                $requisition->reason = $safeReason;
             }
             
             $requisition->save();
+
+            Notification::create([
+                'user_id' => $requisition->user_id,
+                'title' => 'Payment Initiated',
+                'message' => 'Funds are currently being transferred to the vendor.',
+                'type' => 'info',
+                'link' => '/requisitions/' . $requisition->id,
+                'is_read' => false
+            ]);
+
             return response()->json($requisition);
         }
 
@@ -390,6 +489,19 @@ class RequisitionController extends Controller
                 if ($usdTotal > 5000) {
                     $requisition->approval_stage = 'VP';
                     $requisition->approval_token = Str::random(32); 
+
+                    $admins = User::where('role', 'admin')->get();
+                    foreach ($admins as $admin) {
+                        Notification::create([
+                            'user_id' => $admin->id,
+                            'title' => 'VP Approval Required',
+                            'message' => "High-value request from {$requisition->department} requires Admin review.",
+                            'type' => 'warning',
+                            'link' => "/requisitions/{$requisition->id}",
+                            'is_read' => false
+                        ]);
+                    }
+
                 } else {
                     $requisition->status = 'Approved';
                     $requisition->approval_stage = 'Completed';
@@ -397,29 +509,59 @@ class RequisitionController extends Controller
                 }
             } 
             elseif ($requisition->approval_stage === 'VP') {
-                if ($user->role !== 'admin') {
-                    return response()->json(['message' => 'VP (Admin) required'], 403);
-                }
                 $requisition->approval_stage = 'Finance Director';
                 $requisition->approval_token = Str::random(32);
+
+                $financeUsers = User::where('role', 'finance')->get();
+                foreach ($financeUsers as $finance) {
+                    Notification::create([
+                        'user_id' => $finance->id,
+                        'title' => 'Finance Director Approval Required',
+                        'message' => "High-value request requires final financial approval.",
+                        'type' => 'warning',
+                        'link' => "/requisitions/{$requisition->id}",
+                        'is_read' => false
+                    ]);
+                }
+
             } 
             elseif ($requisition->approval_stage === 'Finance Director') {
-                if (!in_array($user->role, ['finance', 'admin', 'manager'])) {
-                    return response()->json(['message' => 'Finance Director required'], 403);
-                }
                 $requisition->status = 'Approved';
                 $requisition->approval_stage = 'Completed';
                 $requisition->approval_token = null;
             }
 
-            if (isset($validated['reason'])) {
-                $requisition->reason = $validated['reason'];
+            if (!empty($safeReason)) {
+                $requisition->reason = $safeReason;
             }
 
             $requisition->save();
 
+            if ($requisition->approval_stage === 'Completed') {
+                Notification::create([
+                    'user_id' => $requisition->user_id,
+                    'title' => 'Request Approved!',
+                    'message' => 'Your requisition has been fully approved.',
+                    'type' => 'success',
+                    'link' => '/requisitions/' . $requisition->id,
+                    'is_read' => false
+                ]);
+
+                $financeUsers = User::where('role', 'finance')->get();
+                foreach ($financeUsers as $finance) {
+                    Notification::create([
+                        'user_id' => $finance->id,
+                        'title' => 'Ready for Processing',
+                        'message' => "Request from {$requisition->department} is approved and needs PO/Payment.",
+                        'type' => 'info',
+                        'link' => "/requisitions/{$requisition->id}",
+                        'is_read' => false
+                    ]);
+                }
+            }
+
             if ($requisition->approval_token) {
-                Mail::to('darrenanthonybeltham@gmail.com')->send(new ManagerApprovalEmail($requisition));
+                Mail::to('darrenanthonybeltham@gmail.com')->queue(new ManagerApprovalEmail($requisition));
             }
         }
 
@@ -429,7 +571,7 @@ class RequisitionController extends Controller
     public function uploadInvoice(Request $request, $id)
     {
         $user = $request->user();
-        if (!in_array($user->role, ['finance', 'admin', 'manager'])) {
+        if (!in_array($user->role, ['finance', 'admin'])) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 

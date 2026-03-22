@@ -8,11 +8,12 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\AnalyticsController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Middleware\MongoAuthMiddleware;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
-Route::get('/requisitions/{id}/email-approval', [App\Http\Controllers\RequisitionController::class, 'emailApproval']);
+Route::get('/requisitions/{id}/email-approval', [RequisitionController::class, 'emailApproval']);
 
 Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handleDisbursement']);
 
@@ -34,6 +35,9 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
     Route::post('/requisitions/{id}/invoice', [RequisitionController::class, 'uploadInvoice']);
     Route::get('/requisitions/{id}/po', [RequisitionController::class, 'downloadPoPdf']);
+
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::post('/notifications/read', [NotificationController::class, 'markAsRead']);
 
     Route::get('/budgets', [App\Http\Controllers\BudgetController::class, 'index']);
     Route::get('/budget/current', [App\Http\Controllers\BudgetController::class, 'current']);

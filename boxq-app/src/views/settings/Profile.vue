@@ -9,11 +9,7 @@ const currentUser = ref({
     email: '',
     department: '',
     role: '',
-    avatar: '',
-    preferences: {
-        email_on_status: true,
-        email_on_new: false
-    }
+    avatar: ''
 });
 
 const passwordForm = reactive({
@@ -22,28 +18,16 @@ const passwordForm = reactive({
     new_password_confirmation: ''
 });
 
-const prefForm = reactive({
-    email_on_status: true,
-    email_on_new: false
-});
-
 const isSubmittingPassword = ref(false);
-const isSavingPrefs = ref(false);
 const isUploading = ref(false);
 const passSuccess = ref('');
 const passError = ref('');
-const prefSuccess = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 
 onMounted(() => {
     const userData = localStorage.getItem('user');
     if (userData) {
-        const parsed = JSON.parse(userData);
-        currentUser.value = parsed;
-        if (parsed.preferences) {
-            prefForm.email_on_status = parsed.preferences.email_on_status;
-            prefForm.email_on_new = parsed.preferences.email_on_new;
-        }
+        currentUser.value = JSON.parse(userData);
     }
 });
 
@@ -68,25 +52,6 @@ const updatePassword = async () => {
         }
     } finally {
         isSubmittingPassword.value = false;
-    }
-};
-
-const savePreferences = async () => {
-    isSavingPrefs.value = true;
-    prefSuccess.value = '';
-
-    try {
-        const response = await api.put('/user/preferences', { preferences: prefForm });
-        prefSuccess.value = 'Preferences saved successfully.';
-        
-        currentUser.value = response.data.user;
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-        
-        setTimeout(() => prefSuccess.value = '', 3000);
-    } catch (error) {
-        alert("Failed to save preferences.");
-    } finally {
-        isSavingPrefs.value = false;
     }
 };
 
@@ -125,16 +90,14 @@ const handleFileUpload = async (event: Event) => {
 </script>
 
 <script lang="ts">
-export default {
-    name: 'ProfileView'
-}
+export default { name: 'ProfileView' }
 </script>
 
 <template>
     <MainLayout>
         <div class="mb-4">
-            <h3 class="fw-bold text-dark mb-1">Account Settings</h3>
-            <p class="text-muted mb-0">Manage your profile and security preferences.</p>
+            <h3 class="fw-bold text-dark mb-1">My Profile</h3>
+            <p class="text-muted mb-0">Manage your personal identity and security credentials.</p>
         </div>
 
         <div class="row">
@@ -195,43 +158,6 @@ export default {
                             </button>
                         </div>
                     </form>
-                </div>
-
-                <div class="card border-0 shadow-sm p-4">
-                    <div class="d-flex justify-content-between align-items-center mb-4">
-                        <h6 class="text-uppercase text-muted small fw-bold mb-0">Notification Preferences</h6>
-                        <span v-if="prefSuccess" class="text-success small fw-bold">
-                            <i class="fa-solid fa-check me-1"></i> Saved
-                        </span>
-                    </div>
-
-                    <div class="list-group list-group-flush mb-4 border-bottom border-top">
-                        <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0">
-                            <div>
-                                <h6 class="mb-1 fw-bold text-dark">Status Updates</h6>
-                                <p class="mb-0 small text-muted">Email me when my requests are approved, rejected, or paid.</p>
-                            </div>
-                            <div class="form-check form-switch fs-4">
-                                <input v-model="prefForm.email_on_status" class="form-check-input" type="checkbox" role="switch">
-                            </div>
-                        </div>
-                        <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-0 border-bottom-0">
-                            <div>
-                                <h6 class="mb-1 fw-bold text-dark">New Requisitions</h6>
-                                <p class="mb-0 small text-muted">Email me when a new request requires my attention.</p>
-                            </div>
-                            <div class="form-check form-switch fs-4">
-                                <input v-model="prefForm.email_on_new" class="form-check-input" type="checkbox" role="switch">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="d-flex justify-content-end">
-                        <button @click="savePreferences" class="btn btn-outline-dark px-4" :disabled="isSavingPrefs">
-                            <span v-if="isSavingPrefs" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                            Save Preferences
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
