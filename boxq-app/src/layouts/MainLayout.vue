@@ -330,3 +330,12 @@ export default { name: 'MainLayout' }
     transition: all 0.2s ease-in-out;
 }
 </style>
+
+<style>
+.form-control:focus,
+.form-select:focus,
+.btn:focus {
+    box-shadow: none !important;
+    border-color: #dee2e6 !important;
+}
+</style>

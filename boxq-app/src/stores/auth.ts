@@ -1,17 +1,14 @@
 import { defineStore } from 'pinia';
 import api from '../services/api';
 
-export interface User {
+interface User {
     id?: string;
+    _id?: string;
     name: string;
     email: string;
     role: string;
     department: string;
-}
-
-export interface LoginCredentials {
-    email: string;
-    password?: string;
+    avatar?: string;
 }
 
 interface AuthState {
@@ -24,33 +21,48 @@ export const useAuthStore = defineStore('auth', {
         user: JSON.parse(localStorage.getItem('user') || 'null'),
         token: localStorage.getItem('token') || null,
     }),
+    
     getters: {
         isAuthenticated: (state) => !!state.token,
         currentUser: (state) => state.user,
+        userRole: (state) => state.user?.role || 'employee',
     },
+    
     actions: {
-        async login(credentials: LoginCredentials) {
-            const response = await api.post('/login', credentials);
-            
-            this.token = response.data.token;
-            this.user = response.data.user;
-            
-            if (this.token) {
-                localStorage.setItem('token', this.token);
-            }
-            if (this.user) {
-                localStorage.setItem('user', JSON.stringify(this.user));
-            }
+        setAuth(user: User, token: string) {
+            this.user = user;
+            this.token = token;
+            localStorage.setItem('user', JSON.stringify(user));
+            localStorage.setItem('token', token);
         },
+        
         async logout() {
             try {
-                await api.post('/logout');
-            } catch (error) {
+                if (this.token) {
+                    await api.post('/logout').catch(() => {}); 
+                }
             } finally {
-                this.token = null;
-                this.user = null;
-                localStorage.removeItem('token');
-                localStorage.removeItem('user');
+                this.clearAuth();
+            }
+        },
+
+        clearAuth() {
+            this.user = null;
+            this.token = null;
+            localStorage.removeItem('user');
+            localStorage.removeItem('token');
+        },
+
+        async checkAuth() {
+            if (!this.token) return false;
+            try {
+                const response = await api.get('/user');
+                this.user = response.data;
+                localStorage.setItem('user', JSON.stringify(response.data));
+                return true;
+            } catch (error) {
+                this.clearAuth();
+                return false;
             }
         }
     }

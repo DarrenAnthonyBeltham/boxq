@@ -15,7 +15,7 @@ interface Requisition {
     currency: string; exchange_rate: number; cost_centers: CostCenter[]; status: string; approval_stage?: string;
     reason?: string; attachment?: string; is_over_budget?: boolean; invoice_attachment?: string;
     invoice_amount?: number; vendor_bank_code?: string; vendor_account_number?: string; vendor_account_name?: string;
-    amount_paid?: number; paid_by?: string; paid_at?: string; reconciled_by?: string; reconciled_at?: string; created_at: string;
+    amount_paid?: number; paid_by?: string; paid_at?: string; reconciled_by?: string; reconciled_at?: string; created_at: string; vendor_email?: string;
 }
 
 const route = useRoute();
@@ -24,9 +24,13 @@ const toast = useToast();
 const requisition = ref<Requisition | null>(null);
 const auditLogs = ref<AuditLog[]>([]);
 const loading = ref(true);
-const currentUser = ref({ role: '', department: '' });
+const currentUser = ref({ id: '', _id: '', role: '', department: '' });
 
 const isProcessing = ref(false);
+const isRecalling = ref(false);
+const isSendingPo = ref(false);
+const isDownloading = ref(false);
+const isDownloadingFile = ref(false);
 const showRejectInput = ref(false);
 const rejectReason = ref('');
 const invoiceFile = ref<File | null>(null);
@@ -90,7 +94,38 @@ const cloneRequest = () => {
     if (requisition.value) router.push(`/create?clone_id=${requisition.value._id || requisition.value.id}`);
 };
 
+const downloadSecureFile = async (type: string) => {
+    isDownloadingFile.value = true;
+    try {
+        toast.info("Securely fetching document...");
+        const response = await api.get(`/requisitions/${route.params.id}/file/${type}`, { responseType: 'blob' });
+        
+        let filename = `${type}-${route.params.id}.pdf`;
+        const disposition = response.headers['content-disposition'];
+        if (disposition && disposition.indexOf('filename=') !== -1) {
+            const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+            if (matches != null && matches[1]) { 
+                filename = matches[1].replace(/['"]/g, '');
+            }
+        }
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success("Document downloaded securely!");
+    } catch (error) {
+        toast.error("Failed to download document. You may not have permission.");
+    } finally {
+        isDownloadingFile.value = false;
+    }
+};
+
 const downloadPo = async () => {
+    isDownloading.value = true;
     try {
         toast.info("Generating PDF Document...");
         const reqId = String(route.params.id);
@@ -105,6 +140,29 @@ const downloadPo = async () => {
         toast.success("Purchase Order Downloaded!");
     } catch (error) {
         toast.error("Failed to generate PDF.");
+    } finally {
+        isDownloading.value = false;
+    }
+};
+
+const emailPoToVendor = async () => {
+    if (!requisition.value?.vendor_email) {
+        toast.warning("Cannot email PO: Vendor email is missing.");
+        return;
+    }
+    
+    isSendingPo.value = true;
+    try {
+        await api.post(`/requisitions/${route.params.id}/send-po`);
+        toast.success(`Purchase Order automatically emailed to ${requisition.value.vendor_email}`);
+    } catch (error: unknown) {
+        if (axios.isAxiosError(error)) {
+            toast.error(error.response?.data?.message || "Failed to email vendor.");
+        } else {
+            toast.error("Failed to email vendor.");
+        }
+    } finally {
+        isSendingPo.value = false;
     }
 };
 
@@ -124,6 +182,30 @@ const canApprove = computed(() => {
     
     return false;
 });
+
+const canRecall = computed(() => {
+    if (!requisition.value || requisition.value.status !== 'Pending') return false;
+    const currentUserId = currentUser.value.id || currentUser.value._id;
+    return requisition.value.user_id === currentUserId;
+});
+
+const recallRequest = async () => {
+    if (!confirm("Are you sure you want to recall this request back to Draft mode?")) return;
+    
+    isRecalling.value = true;
+    try {
+        await api.post(`/requisitions/${route.params.id}/recall`);
+        toast.success("Request recalled successfully.");
+        router.push('/create?clone_id=' + route.params.id);
+    } catch (error: unknown) {
+        if (axios.isAxiosError(error)) {
+            toast.error(error.response?.data?.message || "Failed to recall request.");
+        } else {
+            toast.error("Failed to recall request.");
+        }
+        isRecalling.value = false;
+    }
+};
 
 const updateStatus = async (newStatus: string) => {
     if (newStatus === 'Rejected' && !rejectReason.value) { 
@@ -223,10 +305,12 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                 <div><h3 class="fw-bold text-dark mb-0">Requisition Details</h3><p class="text-muted mb-0 small">Review and process the purchase request.</p></div>
             </div>
             <div class="d-flex gap-2">
-                <button v-if="isPOMatch" @click="downloadPo" class="btn btn-dark shadow-sm"><i class="fa-solid fa-file-pdf me-2"></i>Download PO</button>
-                <button v-if="canApprove" @click="updateStatus('Approved')" class="btn btn-success fw-bold shadow-sm">Approve</button>
-                <button v-if="canApprove" @click="showRejectInput = true" class="btn btn-danger fw-bold shadow-sm">Reject</button>
-                <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm"><i class="fa-solid fa-copy me-2"></i>Clone Request</button>
+                <button v-if="isPOMatch && ['admin', 'finance'].includes(currentUser.role)" @click="emailPoToVendor" class="btn btn-dark shadow-sm" :disabled="isSendingPo"><span v-if="isSendingPo" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-envelope me-2"></i>Email PO to Vendor</button>
+                <button v-if="isPOMatch" @click="downloadPo" class="btn btn-outline-dark shadow-sm" :disabled="isDownloading"><span v-if="isDownloading" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-file-pdf me-2"></i>Download PO</button>
+                <button v-if="canApprove" @click="updateStatus('Approved')" class="btn btn-success fw-bold shadow-sm" :disabled="isProcessing"><span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-check me-1"></i> Approve</button>
+                <button v-if="canApprove" @click="showRejectInput = true" class="btn btn-danger fw-bold shadow-sm" :disabled="isProcessing"><i class="fa-solid fa-xmark me-1"></i> Reject</button>
+                <button v-if="canRecall" @click="recallRequest" class="btn btn-warning fw-bold shadow-sm" :disabled="isRecalling || isProcessing"><span v-if="isRecalling" class="spinner-border spinner-border-sm me-2"></span><i v-else class="fa-solid fa-rotate-left me-2"></i>Recall to Draft</button>
+                <button @click="cloneRequest" class="btn btn-outline-primary shadow-sm" :disabled="isProcessing"><i class="fa-solid fa-copy me-2"></i>Clone Request</button>
             </div>
         </div>
 
@@ -252,7 +336,13 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
 
                         <div class="mb-4"><h6 class="text-uppercase text-muted small fw-bold mb-2">Business Justification</h6><p class="mb-0 bg-light p-3 rounded text-dark">{{ requisition.justification }}</p></div>
 
-                        <div v-if="requisition.attachment" class="mb-4"><h6 class="text-uppercase text-muted small fw-bold mb-2">Attached Documentation</h6><a :href="`http://127.0.0.1:8000/storage/${requisition.attachment}`" target="_blank" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center"><i class="fa-solid fa-paperclip me-2"></i> View Original Request File</a></div>
+                        <div v-if="requisition.attachment" class="mb-4">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-2">Attached Documentation</h6>
+                            <button @click="downloadSecureFile('request')" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center" :disabled="isDownloadingFile">
+                                <span v-if="isDownloadingFile" class="spinner-border spinner-border-sm me-2"></span>
+                                <i v-else class="fa-solid fa-lock me-2"></i> Download Secure File
+                            </button>
+                        </div>
 
                         <h6 class="text-uppercase text-muted small fw-bold mb-3 mt-5">Line Items</h6>
                         <div class="table-responsive">
@@ -350,8 +440,17 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                             <div class="mb-4">
                                 <h6 class="text-uppercase small fw-bold text-secondary mb-2">Vendor Invoice & Bank Details</h6>
                                 <div v-if="hasInvoice" class="d-flex align-items-center justify-content-between p-2 border rounded bg-success bg-opacity-10 border-success mb-2">
-                                    <div class="d-flex align-items-center text-success"><i class="fa-solid fa-file-invoice fs-4 me-2"></i><div><span class="small fw-bold d-block mb-1">Total: {{ requisition.currency === 'USD' ? '$' : 'Rp' }}{{ Number(requisition.invoice_amount).toLocaleString() }}</span><span class="small opacity-75 d-block">{{ requisition.vendor_bank_code }} - {{ requisition.vendor_account_number }}</span></div></div>
-                                    <a :href="`http://127.0.0.1:8000/storage/${requisition.invoice_attachment}`" target="_blank" class="btn btn-sm btn-success">View</a>
+                                    <div class="d-flex align-items-center text-success">
+                                        <i class="fa-solid fa-file-invoice fs-4 me-2"></i>
+                                        <div>
+                                            <span class="small fw-bold d-block mb-1">Total: {{ requisition.currency === 'USD' ? '$' : 'Rp' }}{{ Number(requisition.invoice_amount).toLocaleString() }}</span>
+                                            <span class="small opacity-75 d-block">{{ requisition.vendor_bank_code }} - {{ requisition.vendor_account_number }}</span>
+                                        </div>
+                                    </div>
+                                    <button @click="downloadSecureFile('invoice')" class="btn btn-sm btn-success" :disabled="isDownloadingFile">
+                                        <span v-if="isDownloadingFile" class="spinner-border spinner-border-sm me-1"></span>
+                                        <i v-else class="fa-solid fa-lock me-1"></i> View
+                                    </button>
                                 </div>
                                 <div v-else class="d-flex flex-column gap-2 mt-2">
                                     <div class="input-group input-group-sm"><span class="input-group-text bg-light text-muted fw-bold" style="width: 140px;">Invoice Total</span><input type="number" v-model="invoiceAmountInput" class="form-control" placeholder="0.00" step="0.01"></div>

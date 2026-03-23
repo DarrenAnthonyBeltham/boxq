@@ -1,180 +1,197 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useToast } from 'vue-toastification';
+import axios from 'axios';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 
-interface GoodsReceipt {
-    _id?: string | { $oid: string };
-    id?: string;
-    grn_number: string;
-    requisition_id: string;
-    received_by: string;
-    notes: string;
-    created_at: string;
+interface Item {
+    name: string;
+    qty: number;
+    price: number;
 }
 
 interface Requisition {
-    _id?: string | { $oid: string };
-    id?: string;
-    department: string;
+    _id: string;
+    id: number;
     requester: string;
+    department: string;
+    items: Item[];
     total_price: number;
+    currency: string;
     status: string;
+    created_at: string;
+    vendor_account_name?: string;
 }
 
-interface Identifiable {
-    _id?: string | { $oid: string };
-    id?: string;
+interface PaginationData {
+    current_page: number;
+    last_page: number;
+    total: number;
+    per_page: number;
 }
 
-const grns = ref<GoodsReceipt[]>([]);
-const pendingReqs = ref<Requisition[]>([]);
+const router = useRouter();
+const toast = useToast();
+
+const receipts = ref<Requisition[]>([]);
 const loading = ref(true);
-const showModal = ref(false);
-const submitting = ref(false);
+const isProcessing = ref<string | number | null>(null);
 
-const form = ref({
-    requisition_id: '',
-    notes: ''
+const searchQuery = ref('');
+const pagination = ref<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    total: 0,
+    per_page: 15
 });
 
-const getSafeId = (item: Identifiable) => {
-    if (item.id) return String(item.id);
-    if (item._id) return typeof item._id === 'object' ? String(item._id.$oid) : String(item._id);
-    return Math.random().toString();
-};
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
-const fetchData = async () => {
+const fetchReceipts = async (page = 1) => {
+    loading.value = true;
     try {
-        const [grnRes, reqRes] = await Promise.all([
-            api.get('/grn'),
-            api.get('/requisitions')
-        ]);
+        const response = await api.get('/grn', {
+            params: {
+                page: page,
+                search: searchQuery.value
+            }
+        });
         
-        grns.value = grnRes.data;
-        pendingReqs.value = reqRes.data.filter((r: Requisition) => r.status === 'PO Created' || r.status === 'Approved');
+        receipts.value = response.data.data;
+        pagination.value = {
+            current_page: response.data.current_page,
+            last_page: response.data.last_page,
+            total: response.data.total,
+            per_page: response.data.per_page
+        };
     } catch (error) {
-        console.error(error);
+        toast.error("Failed to load incoming deliveries.");
     } finally {
         loading.value = false;
     }
 };
 
-const createGRN = async () => {
-    submitting.value = true;
-    try {
-        await api.post('/grn', form.value);
-        await fetchData();
-        showModal.value = false;
-        form.value = { requisition_id: '', notes: '' };
-    } catch (error) {
-        console.error(error);
-        alert('Failed to log goods receipt.');
-    } finally {
-        submitting.value = false;
+onMounted(() => {
+    fetchReceipts();
+});
+
+watch(searchQuery, () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        fetchReceipts(1);
+    }, 500);
+});
+
+const goToPage = (page: number) => {
+    if (page >= 1 && page <= pagination.value.last_page) {
+        fetchReceipts(page);
     }
 };
 
-onMounted(() => {
-    fetchData();
-});
+const confirmReceipt = async (id: string | number) => {
+    if (!confirm("Are you sure you want to officially confirm these goods have physically arrived? This will notify Finance to release payment.")) {
+        return;
+    }
+
+    isProcessing.value = id;
+    try {
+        await api.post('/grn', { requisition_id: id, delivery_notes: 'Confirmed full delivery upon physical inspection.' });
+        toast.success('Goods Receipt Note securely logged. Finance notified.');
+        fetchReceipts(pagination.value.current_page);
+    } catch (error: unknown) {
+        if (axios.isAxiosError(error)) {
+            toast.error(error.response?.data?.message || "Failed to confirm receipt.");
+        } else {
+            toast.error("Failed to confirm receipt.");
+        }
+    } finally {
+        isProcessing.value = null;
+    }
+};
+
+const viewDetails = (id: string | number) => {
+    router.push(`/requisition/${id}`);
+};
+
+const formatId = (id: string | number) => {
+    const str = String(id);
+    return 'PO-' + str.slice(-8).toUpperCase();
+};
+
+const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
 </script>
 
-<script lang="ts">
-export default {
-    name: 'GoodsReceipts'
-}
-</script>
+<script lang="ts"> export default { name: 'GoodsReceiptView' } </script>
 
 <template>
     <MainLayout>
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h3 class="fw-bold text-dark mb-1">Goods Receiving</h3>
-                <p class="text-muted mb-0">Confirm physical delivery of ordered items.</p>
-            </div>
-            <button @click="showModal = true" class="btn btn-dark shadow-sm px-4 fw-bold">
-                <i class="fa-solid fa-box-open me-2"></i>Log Receipt
-            </button>
+        <div class="mb-4">
+            <h3 class="fw-bold text-dark mb-1">Incoming Deliveries</h3>
+            <p class="text-muted mb-0">Confirm physical receipt of goods to authorize vendor payments.</p>
         </div>
 
-        <div v-if="loading" class="text-center py-5">
-            <div class="spinner-border text-secondary" role="status">
-                <span class="visually-hidden"></span>
+        <div class="card border-0 shadow-sm rounded-3 overflow-hidden">
+            <div class="card-header bg-white border-bottom p-3 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                <div class="input-group" style="max-width: 400px;">
+                    <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
+                    <input v-model="searchQuery" type="text" class="form-control border-start-0 bg-light" placeholder="Search POs, vendors, or items...">
+                </div>
             </div>
-        </div>
 
-        <div v-else class="card border-0 shadow-sm rounded-3">
-            <div class="card-body p-0">
+            <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="bg-light">
+                    <thead class="bg-light text-muted small fw-bold text-uppercase" style="letter-spacing: 0.5px;">
                         <tr>
-                            <th class="ps-4 text-uppercase small fw-bold text-secondary py-3">GRN Number</th>
-                            <th class="text-uppercase small fw-bold text-secondary py-3">Date Received</th>
-                            <th class="text-uppercase small fw-bold text-secondary py-3">Received By</th>
-                            <th class="text-uppercase small fw-bold text-secondary py-3">Req ID</th>
-                            <th class="text-uppercase small fw-bold text-secondary py-3 pe-4 text-end">Notes</th>
+                            <th class="py-3 px-4 border-0">PO Number</th>
+                            <th class="py-3 border-0">Vendor</th>
+                            <th class="py-3 border-0">Primary Item</th>
+                            <th class="py-3 border-0">Total Qty</th>
+                            <th class="py-3 border-0">Status</th>
+                            <th class="py-3 border-0">Ordered On</th>
+                            <th class="py-3 px-4 border-0 text-end">Delivery Action</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <tr v-for="grn in grns" :key="getSafeId(grn)">
-                            <td class="ps-4 font-monospace fw-bold text-dark">{{ grn.grn_number }}</td>
-                            <td class="text-muted small">{{ new Date(grn.created_at).toLocaleDateString() }}</td>
-                            <td class="fw-bold text-dark">{{ grn.received_by }}</td>
-                            <td class="font-monospace text-muted small">#{{ String(grn.requisition_id).slice(-6).toUpperCase() }}</td>
-                            <td class="pe-4 text-end text-muted small text-truncate" style="max-width: 200px;">
-                                {{ grn.notes || 'N/A' }}
+                    <tbody v-if="loading">
+                        <tr><td colspan="7" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                    </tbody>
+                    <tbody v-else-if="receipts.length === 0">
+                        <tr><td colspan="7" class="text-center py-5 text-muted"><i class="fa-solid fa-box-open fs-1 text-light mb-3 d-block"></i>No pending deliveries found.</td></tr>
+                    </tbody>
+                    <tbody v-else class="border-top-0">
+                        <tr v-for="req in receipts" :key="req._id || req.id" class="border-bottom">
+                            <td class="px-4 py-3"><span class="text-dark fw-bold">{{ formatId(req._id || req.id) }}</span></td>
+                            <td class="py-3 fw-medium text-dark">{{ req.vendor_account_name || 'Pending Vendor Assign' }}</td>
+                            <td class="py-3 text-muted">{{ req.items && req.items.length > 0 ? req.items[0]?.name : 'N/A' }} <span v-if="req.items && req.items.length > 1" class="small text-secondary">(+{{ req.items.length - 1 }} more)</span></td>
+                            <td class="py-3 fw-bold">{{ (req.items || []).reduce((sum, item) => sum + (item.qty || 0), 0) }} Units</td>
+                            <td class="py-3">
+                                <span v-if="req.status === 'PO Created'" class="badge bg-warning text-dark px-3 py-2 rounded-pill"><i class="fa-solid fa-truck-fast me-1"></i> In Transit</span>
+                                <span v-else class="badge bg-primary px-3 py-2 rounded-pill"><i class="fa-solid fa-box-check me-1"></i> Received</span>
                             </td>
-                        </tr>
-                        <tr v-if="grns.length === 0">
-                            <td colspan="5" class="text-center py-5 text-muted">No goods have been received yet.</td>
+                            <td class="py-3 text-muted small">{{ formatDate(req.created_at) }}</td>
+                            <td class="px-4 py-3 text-end d-flex justify-content-end gap-2">
+                                <button @click="viewDetails(req._id || req.id)" class="btn btn-light border btn-sm px-3 shadow-sm text-dark">Details</button>
+                                <button v-if="req.status === 'PO Created'" @click="confirmReceipt(req._id || req.id)" class="btn btn-primary btn-sm px-3 fw-bold shadow-sm" :disabled="isProcessing === (req._id || req.id)">
+                                    <span v-if="isProcessing === (req._id || req.id)" class="spinner-border spinner-border-sm"></span>
+                                    <span v-else>Confirm Receipt</span>
+                                </button>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
             </div>
-        </div>
-
-        <div v-if="showModal" class="modal-backdrop fade show" style="opacity: 0.5;"></div>
-        <div v-if="showModal" class="modal d-block" tabindex="-1" @click.self="showModal = false">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content border-0 shadow-lg rounded-4">
-                    <div class="modal-header border-bottom-0 pb-0 pt-4 px-4">
-                        <h5 class="modal-title fw-bold">Log Goods Receipt</h5>
-                        <button type="button" class="btn-close shadow-none" @click="showModal = false"></button>
-                    </div>
-                    <div class="modal-body p-4">
-                        <form @submit.prevent="createGRN">
-                            <div class="mb-3">
-                                <label class="form-label fw-bold small text-secondary">Incoming Order</label>
-                                <select v-model="form.requisition_id" class="form-select" required>
-                                    <option value="" disabled>-- Select Arrived Order --</option>
-                                    <option v-for="req in pendingReqs" :key="getSafeId(req)" :value="getSafeId(req)">
-                                        #{{ getSafeId(req).slice(-6).toUpperCase() }} - {{ req.requester }} ({{ req.department }})
-                                    </option>
-                                </select>
-                                <div v-if="pendingReqs.length === 0" class="form-text text-danger mt-1">
-                                    No pending orders awaiting arrival.
-                                </div>
-                            </div>
-                            <div class="mb-4">
-                                <label class="form-label fw-bold small text-secondary">Inspection Notes (Optional)</label>
-                                <textarea v-model="form.notes" class="form-control" rows="3" placeholder="e.g. Box slightly damaged, but contents intact."></textarea>
-                            </div>
-                            <div class="d-grid">
-                                <button type="submit" class="btn btn-dark py-2 fw-bold" :disabled="submitting || pendingReqs.length === 0">
-                                    <span v-if="submitting" class="spinner-border spinner-border-sm me-2"></span>
-                                    <i v-else class="fa-solid fa-check me-2"></i>
-                                    {{ submitting ? 'Logging...' : 'Confirm Delivery' }}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
+            
+            <div v-if="!loading && pagination.last_page > 1" class="card-footer bg-white border-top p-3 d-flex justify-content-between align-items-center">
+                <span class="text-muted small">Showing page <strong>{{ pagination.current_page }}</strong> of <strong>{{ pagination.last_page }}</strong></span>
+                <div class="btn-group shadow-sm">
+                    <button @click="goToPage(pagination.current_page - 1)" class="btn btn-light border btn-sm" :disabled="pagination.current_page === 1"><i class="fa-solid fa-chevron-left"></i></button>
+                    <button @click="goToPage(pagination.current_page + 1)" class="btn btn-light border btn-sm" :disabled="pagination.current_page === pagination.last_page"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
             </div>
         </div>
     </MainLayout>
 </template>
-
-<style scoped>
-.modal { background-color: rgba(0,0,0,0.1); }
-</style>

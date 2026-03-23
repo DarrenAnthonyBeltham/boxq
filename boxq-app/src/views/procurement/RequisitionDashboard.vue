@@ -1,222 +1,202 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useToast } from 'vue-toastification';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 
 interface Item {
     name: string;
-    price: number;
     qty: number;
+    price: number;
 }
 
 interface Requisition {
-    id?: string;
-    _id?: string | { $oid: string };
+    _id: string;
+    id: number;
     requester: string;
     department: string;
-    justification?: string;
-    items?: Item[];
+    items: Item[];
     total_price: number;
+    currency: string;
     status: string;
-    reason?: string;
     created_at: string;
 }
 
+interface PaginationData {
+    current_page: number;
+    last_page: number;
+    total: number;
+    per_page: number;
+}
+
+const router = useRouter();
+const toast = useToast();
+
 const requisitions = ref<Requisition[]>([]);
 const loading = ref(true);
-const userRole = ref('');
-const currentPage = ref(1);
-const itemsPerPage = 11;
 
-const totalPages = computed(() => {
-    return Math.ceil(requisitions.value.length / itemsPerPage);
+const searchQuery = ref('');
+const statusFilter = ref('');
+const pagination = ref<PaginationData>({
+    current_page: 1,
+    last_page: 1,
+    total: 0,
+    per_page: 15
 });
 
-const paginatedRequisitions = computed(() => {
-    const start = (currentPage.value - 1) * itemsPerPage;
-    const end = start + itemsPerPage;
-    return requisitions.value.slice(start, end);
-});
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
-const fetchRequisitions = async () => {
+const fetchRequisitions = async (page = 1) => {
+    loading.value = true;
     try {
-        const response = await api.get('/requisitions');
-        requisitions.value = response.data;
+        const response = await api.get('/requisitions', {
+            params: {
+                page: page,
+                search: searchQuery.value,
+                status: statusFilter.value
+            }
+        });
+        
+        requisitions.value = response.data.data;
+        pagination.value = {
+            current_page: response.data.current_page,
+            last_page: response.data.last_page,
+            total: response.data.total,
+            per_page: response.data.per_page
+        };
     } catch (error) {
-        console.error("Error fetching requisitions:", error);
+        toast.error("Failed to load requisitions.");
     } finally {
         loading.value = false;
     }
 };
 
-const updateStatus = async (id: string, newStatus: string) => {
-    try {
-        await api.patch(`/requisitions/${id}/status`, { status: newStatus });
-        await fetchRequisitions();
-    } catch (error) {
-        alert("Failed to update status.");
-    }
-};
+onMounted(() => {
+    fetchRequisitions();
+});
 
-const getSafeId = (req: Requisition) => {
-    if (req.id) return String(req.id);
-    if (req._id) {
-        return typeof req._id === 'object' ? String(req._id.$oid) : String(req._id);
-    }
-    return 'UNKNOWN';
-};
+watch(searchQuery, () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        fetchRequisitions(1);
+    }, 500);
+});
 
-const nextPage = () => {
-    if (currentPage.value < totalPages.value) {
-        currentPage.value++;
-    }
-};
-
-const prevPage = () => {
-    if (currentPage.value > 1) {
-        currentPage.value--;
-    }
+const onStatusChange = () => {
+    fetchRequisitions(1);
 };
 
 const goToPage = (page: number) => {
-    currentPage.value = page;
+    if (page >= 1 && page <= pagination.value.last_page) {
+        fetchRequisitions(page);
+    }
 };
 
-onMounted(() => {
-    const userData = localStorage.getItem('user');
-    if (userData) {
-        const user = JSON.parse(userData);
-        userRole.value = user.role || '';
-    }
-    fetchRequisitions();
-});
+const viewDetails = (id: string | number) => {
+    router.push(`/requisition/${id}`);
+};
+
+const getStatusBadge = (status: string) => {
+    const map: Record<string, string> = {
+        'Approved': 'bg-success',
+        'Draft': 'bg-secondary',
+        'Pending': 'bg-warning text-dark',
+        'Rejected': 'bg-danger',
+        'PO Created': 'bg-info text-dark',
+        'Received': 'bg-primary',
+        'Processing Payment': 'bg-secondary text-white',
+        'Paid': 'bg-primary text-white',
+        'Reconciled': 'bg-secondary text-white'
+    };
+    return map[status] || 'bg-light text-dark border';
+};
+
+const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
+const formatId = (id: string | number) => {
+    const str = String(id);
+    return '#' + str.slice(-6).toUpperCase();
+};
 </script>
 
-<script lang="ts">
-export default {
-    name: 'DashboardView'
-}
-</script>
+<script lang="ts"> export default { name: 'RequisitionDashboard' } </script>
 
 <template>
     <MainLayout>
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h3 class="fw-bold text-dark mb-1">Overview</h3>
-                <p class="text-muted mb-0">Track and manage recent requests.</p>
+        <div class="mb-4">
+            <h3 class="fw-bold text-dark mb-1">Overview</h3>
+            <p class="text-muted mb-0">Track and manage recent requests.</p>
+        </div>
+
+        <div class="card border-0 shadow-sm rounded-3 overflow-hidden">
+            <div class="card-header bg-white border-bottom p-3 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                <div class="input-group" style="max-width: 350px;">
+                    <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
+                    <input v-model="searchQuery" type="text" class="form-control border-start-0 bg-light" placeholder="Search by name, dept, or details...">
+                </div>
+                
+                <select v-model="statusFilter" @change="onStatusChange" class="form-select bg-light" style="max-width: 200px;">
+                    <option value="">All Statuses</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Approved">Approved</option>
+                    <option value="PO Created">PO Created</option>
+                    <option value="Processing Payment">Processing Payment</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Reconciled">Reconciled</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
             </div>
-            <RouterLink v-if="userRole !== 'finance'" to="/create" class="btn btn-dark shadow-sm">
-                <i class="fa-solid fa-plus me-2"></i>New Requisition
-            </RouterLink>
-        </div>
 
-        <div v-if="loading" class="text-center py-5">
-            <div class="spinner-border text-secondary" role="status">
-                <span class="visually-hidden"></span>
-            </div>
-        </div>
-
-        <div v-else-if="!requisitions || requisitions.length === 0" class="text-center py-5 bg-white rounded shadow-sm border">
-            <i class="fa-regular fa-folder-open fa-3x text-light mb-3"></i>
-            <h5 class="text-muted">No requisitions found</h5>
-            <p class="text-secondary small">Start by creating a new request.</p>
-        </div>
-
-        <div v-else class="card border-0 shadow-sm">
-            <div class="card-body p-0">
+            <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="bg-light">
+                    <thead class="bg-light text-muted small fw-bold text-uppercase" style="letter-spacing: 0.5px;">
                         <tr>
-                            <th class="ps-4 text-uppercase small fw-bold text-secondary">ID</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Requester</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Department</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Items</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Total</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Status</th>
-                            <th class="text-uppercase small fw-bold text-secondary">Date</th>
-                            <th class="text-uppercase small fw-bold text-secondary text-end pe-4">Actions</th>
+                            <th class="py-3 px-4 border-0">ID</th>
+                            <th class="py-3 border-0">Requester</th>
+                            <th class="py-3 border-0">Department</th>
+                            <th class="py-3 border-0 text-center">Items</th>
+                            <th class="py-3 border-0">Total</th>
+                            <th class="py-3 border-0">Status</th>
+                            <th class="py-3 border-0">Date</th>
+                            <th class="py-3 px-4 border-0 text-end">Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <tr v-for="req in paginatedRequisitions" :key="getSafeId(req)">
-                            <td class="ps-4 font-monospace small">
-                                <RouterLink :to="req.status === 'Draft' ? `/create?id=${getSafeId(req)}` : `/requisition/${getSafeId(req)}`" class="text-decoration-none fw-bold">
-                                    #{{ getSafeId(req).slice(-6).toUpperCase() }}
-                                </RouterLink>
-                            </td>
-                            <td class="fw-bold text-dark">{{ req.requester || 'Unknown' }}</td>
-                            <td><span class="badge bg-light text-dark border">{{ req.department || 'N/A' }}</span></td>
-                            <td>{{ req.items ? req.items.length : 0 }}</td>
-                            <td class="fw-bold">${{ Number(req.total_price || 0).toFixed(2) }}</td>
-                            <td>
-                                <span v-if="req.status === 'Pending'" class="badge bg-warning text-dark bg-opacity-75">Pending</span>
-                                <span v-else-if="req.status === 'Approved'" class="badge bg-success">Approved</span>
-                                <span v-else-if="req.status === 'Rejected'" class="badge bg-danger">Rejected</span>
-                                <span v-else-if="req.status === 'Paid'" class="badge bg-primary">Paid</span>
-                                <span v-else-if="req.status === 'Draft'" class="badge bg-secondary"><i class="fa-solid fa-pen me-1 text-white-50"></i>Draft</span>
-                                <span v-else class="badge bg-secondary">{{ req.status || 'Unknown' }}</span>
-                            </td>
-                            <td class="text-muted small">
-                                {{ req.created_at ? new Date(req.created_at).toLocaleDateString() : 'N/A' }}
-                            </td>
-                            <td class="text-end pe-4">
-                                <div v-if="req.status === 'Draft'">
-                                    <RouterLink :to="`/create?id=${getSafeId(req)}`" class="btn btn-sm btn-outline-primary px-3">
-                                        Edit Draft
-                                    </RouterLink>
-                                </div>
-                                <div v-else-if="userRole === 'manager' && req.status === 'Pending'">
-                                    <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-primary px-3">
-                                        Review
-                                    </RouterLink>
-                                </div>
-                                <div v-else-if="userRole === 'finance' && req.status === 'Approved'">
-                                    <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-primary px-3">
-                                        Process
-                                    </RouterLink>
-                                </div>
-                                <div v-else-if="userRole === 'admin' && req.status !== 'Paid'">
-                                    <button @click="updateStatus(getSafeId(req), 'Approved')" class="btn btn-sm btn-outline-success px-3">
-                                        Force Approve
-                                    </button>
-                                </div>
-                                <div v-else>
-                                    <RouterLink :to="`/requisition/${getSafeId(req)}`" class="btn btn-sm btn-light px-3 text-secondary border">
-                                        View
-                                    </RouterLink>
-                                </div>
+                    <tbody v-if="loading">
+                        <tr><td colspan="8" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                    </tbody>
+                    <tbody v-else-if="requisitions.length === 0">
+                        <tr><td colspan="8" class="text-center py-5 text-muted">No requests found matching your criteria.</td></tr>
+                    </tbody>
+                    <tbody v-else class="border-top-0">
+                        <tr v-for="req in requisitions" :key="req._id || req.id" class="border-bottom">
+                            <td class="px-4 py-3"><span class="text-primary fw-bold">{{ formatId(req._id || req.id) }}</span></td>
+                            <td class="py-3 fw-bold text-dark">{{ req.requester }}</td>
+                            <td class="py-3"><span class="badge border text-dark bg-white shadow-sm">{{ req.department }}</span></td>
+                            <td class="py-3 text-center text-muted">{{ req.items ? req.items.length : 0 }}</td>
+                            <td class="py-3 fw-bold text-dark">{{ req.currency === 'USD' ? '$' : 'Rp' }}{{ Number(req.total_price).toLocaleString() }}</td>
+                            <td class="py-3"><span class="badge rounded-pill px-3 py-2 fw-medium" :class="getStatusBadge(req.status)">{{ req.status }}</span></td>
+                            <td class="py-3 text-muted small">{{ formatDate(req.created_at) }}</td>
+                            <td class="px-4 py-3 text-end">
+                                <button v-if="req.status === 'Approved'" @click="viewDetails(req._id || req.id)" class="btn btn-primary btn-sm px-3 fw-bold shadow-sm">Process</button>
+                                <button v-else @click="viewDetails(req._id || req.id)" class="btn btn-light border btn-sm px-3 shadow-sm text-dark">View</button>
                             </td>
                         </tr>
                     </tbody>
                 </table>
             </div>
-
-            <div v-if="totalPages > 1" class="card-footer bg-white border-top py-3">
-                <nav>
-                    <ul class="pagination justify-content-center mb-0 gap-2">
-                        <li class="page-item" :class="{ disabled: currentPage === 1 }">
-                            <button class="page-link shadow-none border-0 text-dark fw-bold bg-light rounded px-3" @click="prevPage">Previous</button>
-                        </li>
-                        <li v-for="page in totalPages" :key="page" class="page-item">
-                            <button 
-                                class="page-link shadow-none border-0 rounded px-3 fw-bold" 
-                                :class="currentPage === page ? 'bg-dark text-white' : 'text-dark'"
-                                @click="goToPage(page)">
-                                {{ page }}
-                            </button>
-                        </li>
-                        <li class="page-item" :class="{ disabled: currentPage === totalPages }">
-                            <button class="page-link shadow-none border-0 text-dark fw-bold bg-light rounded px-3" @click="nextPage">Next</button>
-                        </li>
-                    </ul>
-                </nav>
+            
+            <div v-if="!loading && pagination.last_page > 1" class="card-footer bg-white border-top p-3 d-flex justify-content-between align-items-center">
+                <span class="text-muted small">Showing page <strong>{{ pagination.current_page }}</strong> of <strong>{{ pagination.last_page }}</strong> ({{ pagination.total }} total records)</span>
+                <div class="btn-group shadow-sm">
+                    <button @click="goToPage(pagination.current_page - 1)" class="btn btn-light border btn-sm" :disabled="pagination.current_page === 1"><i class="fa-solid fa-chevron-left"></i></button>
+                    <button @click="goToPage(pagination.current_page + 1)" class="btn btn-light border btn-sm" :disabled="pagination.current_page === pagination.last_page"><i class="fa-solid fa-chevron-right"></i></button>
+                </div>
             </div>
         </div>
     </MainLayout>
 </template>
-
-<style scoped>
-.page-link {
-    cursor: pointer;
-}
-</style>

@@ -35,6 +35,9 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
     Route::post('/requisitions/{id}/invoice', [RequisitionController::class, 'uploadInvoice']);
     Route::get('/requisitions/{id}/po', [RequisitionController::class, 'downloadPoPdf']);
+    Route::post('/requisitions/{id}/send-po', [RequisitionController::class, 'sendPoToVendor']);
+    Route::post('/requisitions/{id}/recall', [RequisitionController::class, 'recall']);
+    Route::get('/requisitions/{id}/file/{type}', [RequisitionController::class, 'downloadFile']);
 
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications/read', [NotificationController::class, 'markAsRead']);

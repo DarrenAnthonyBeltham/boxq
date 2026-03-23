@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use App\Mail\ManagerApprovalEmail;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -19,22 +21,18 @@ class RequisitionController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
+        $query = Requisition::query();
 
-        if ($user->role === 'admin') {
-            $requisitions = Requisition::orderBy('created_at', 'desc')->get();
-        } 
-        elseif ($user->role === 'finance') {
-            $requisitions = Requisition::where(function ($query) use ($user) {
-                $query->where('user_id', $user->id)
-                      ->orWhere(function ($subQ) {
-                          $subQ->where('approval_stage', 'Finance Director')
-                               ->orWhereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Payment Failed', 'Reconciled']);
-                      });
-            })->orderBy('created_at', 'desc')->get();
-        } 
-        elseif ($user->role === 'manager') {
+        if ($user->role === 'finance') {
+            $query->where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhere(function ($subQ) {
+                      $subQ->where('approval_stage', 'Finance Director')
+                           ->orWhereIn('status', ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Payment Failed', 'Reconciled']);
+                  });
+            });
+        } elseif ($user->role === 'manager') {
             $nowStr = Carbon::now()->format('Y-m-d');
-            
             $delegators = User::where('delegated_to_id', $user->id)
                               ->whereNotNull('delegation_start')
                               ->where('delegation_start', '<=', $nowStr)
@@ -44,18 +42,40 @@ class RequisitionController extends Controller
 
             $departments = array_unique(array_merge([$user->department], $delegators));
 
-            $requisitions = Requisition::where(function ($query) use ($departments, $user) {
-                $query->where(function ($subQ) use ($departments) {
+            $query->where(function ($q) use ($departments, $user) {
+                $q->where(function ($subQ) use ($departments) {
                     $subQ->whereIn('department', $departments)
                          ->where('status', '!=', 'Draft');
                 })->orWhere('user_id', $user->id);
-            })->orderBy('created_at', 'desc')->get();
-        } 
-        else {
-            $requisitions = Requisition::where('user_id', $user->id)
-                                       ->orderBy('created_at', 'desc')
-                                       ->get();
+            });
+        } elseif ($user->role !== 'admin') {
+            $query->where('user_id', $user->id);
         }
+
+        if ($request->filled('search')) {
+            $searchTerm = $request->search;
+            $query->where(function($q) use ($searchTerm) {
+                $q->where('requester', 'like', "%{$searchTerm}%")
+                  ->orWhere('department', 'like', "%{$searchTerm}%")
+                  ->orWhere('justification', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $requisitions = $query->orderBy('created_at', 'desc')->paginate(15);
+
+        $requisitions->getCollection()->transform(function ($req) {
+            if (is_string($req->items)) {
+                $req->items = json_decode($req->items, true);
+            }
+            if (is_string($req->cost_centers)) {
+                $req->cost_centers = json_decode($req->cost_centers, true);
+            }
+            return $req;
+        });
 
         return response()->json($requisitions);
     }
@@ -135,7 +155,7 @@ class RequisitionController extends Controller
 
         $attachmentPath = null;
         if ($request->hasFile('attachment')) {
-            $attachmentPath = $request->file('attachment')->store('attachments', 'public');
+            $attachmentPath = $request->file('attachment')->store('attachments');
         }
 
         $requisition = Requisition::create([
@@ -216,6 +236,10 @@ class RequisitionController extends Controller
     {
         $requisition = Requisition::findOrFail($id);
 
+        if ($requisition->items && is_string($requisition->items)) {
+            $requisition->items = json_decode($requisition->items, true);
+        }
+
         $po = (object) [
             'po_number' => 'PO-' . strtoupper(substr($requisition->id, -8)),
             'created_at' => $requisition->created_at,
@@ -239,6 +263,83 @@ class RequisitionController extends Controller
         }, $filename, [
             'Content-Type' => 'application/pdf',
         ]);
+    }
+
+    public function downloadFile(Request $request, $id, $type)
+    {
+        $user = $request->user();
+        $requisition = Requisition::findOrFail($id);
+
+        if (!in_array($user->role, ['admin', 'finance']) && $requisition->user_id !== $user->id) {
+            if (!($user->role === 'manager' && $requisition->department === $user->department)) {
+                return response()->json(['message' => 'Unauthorized to view this file.'], 403);
+            }
+        }
+
+        $path = $type === 'invoice' ? $requisition->invoice_attachment : $requisition->attachment;
+
+        if (!$path || !Storage::exists($path)) {
+            if (Storage::disk('public')->exists($path)) {
+                return response()->download(storage_path('app/public/' . $path));
+            }
+            return response()->json(['message' => 'File not found on server.'], 404);
+        }
+
+        return Storage::download($path);
+    }
+
+    public function sendPoToVendor(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!in_array($user->role, ['finance', 'admin'])) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $requisition = Requisition::findOrFail($id);
+
+        if (empty($requisition->vendor_email)) {
+            return response()->json(['message' => 'Vendor email is missing from this requisition.'], 422);
+        }
+
+        if ($requisition->items && is_string($requisition->items)) {
+            $requisition->items = json_decode($requisition->items, true);
+        }
+
+        $po = (object) [
+            'po_number' => 'PO-' . strtoupper(substr($requisition->id, -8)),
+            'created_at' => $requisition->created_at,
+            'total_amount' => $requisition->total_price,
+        ];
+
+        $vendor = (object) [
+            'name' => $requisition->vendor_account_name ?? 'Vendor',
+            'address' => $requisition->vendor_address ?? 'N/A',
+            'email' => $requisition->vendor_email,
+            'tax_id' => $requisition->vendor_tax_id ?? 'N/A',
+            'payment_terms' => $requisition->vendor_payment_terms ?? 'N/A',
+        ];
+
+        $pdf = Pdf::loadView('pdf.po', compact('requisition', 'po', 'vendor'));
+
+        Mail::send([], [], function ($message) use ($vendor, $pdf, $po) {
+            $message->to($vendor->email)
+                    ->subject('Purchase Order: ' . $po->po_number)
+                    ->html('<p>Dear ' . $vendor->name . ',</p><p>Please find attached our Purchase Order <strong>' . $po->po_number . '</strong>.</p><p>Best regards,<br>Procurement Department</p>')
+                    ->attachData($pdf->output(), $po->po_number . '.pdf', [
+                        'mime' => 'application/pdf',
+                    ]);
+        });
+
+        Notification::create([
+            'user_id' => $user->id,
+            'title' => 'PO Sent to Vendor',
+            'message' => 'Purchase Order successfully emailed to ' . $vendor->email,
+            'type' => 'success',
+            'link' => '/requisitions/' . $requisition->id,
+            'is_read' => false
+        ]);
+
+        return response()->json(['message' => 'PO sent successfully.']);
     }
 
     public function update(Request $request, $id)
@@ -321,7 +422,7 @@ class RequisitionController extends Controller
         }
 
         if ($request->hasFile('attachment')) {
-            $requisition->attachment = $request->file('attachment')->store('attachments', 'public');
+            $requisition->attachment = $request->file('attachment')->store('attachments');
         }
 
         $requisition->justification = $safeJustification;
@@ -357,6 +458,30 @@ class RequisitionController extends Controller
         if ($requisition->cost_centers && is_string($requisition->cost_centers)) {
             $requisition->cost_centers = json_decode($requisition->cost_centers, true);
         }
+        if ($requisition->items && is_string($requisition->items)) {
+            $requisition->items = json_decode($requisition->items, true);
+        }
+
+        return response()->json($requisition);
+    }
+
+    public function recall(Request $request, $id)
+    {
+        $user = $request->user();
+        $requisition = Requisition::findOrFail($id);
+
+        if ($requisition->user_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized. Only the requester can recall.'], 403);
+        }
+
+        if ($requisition->status !== 'Pending') {
+            return response()->json(['message' => 'Cannot recall a request that has already been processed or approved.'], 422);
+        }
+
+        $requisition->status = 'Draft';
+        $requisition->approval_stage = null;
+        $requisition->approval_token = null;
+        $requisition->save();
 
         return response()->json($requisition);
     }
@@ -441,45 +566,51 @@ class RequisitionController extends Controller
 
             $amountToPayIDR = (int) round($request->input('payment_amount'));
 
-            $xenditSecretKey = env('XENDIT_SECRET_KEY');
-            
-            $response = Http::withBasicAuth($xenditSecretKey, '')
-                ->post('https://api.xendit.co/disbursements', [
-                    'external_id' => 'req_' . $requisition->id . '_' . time(),
-                    'bank_code' => $requisition->vendor_bank_code,
-                    'account_holder_name' => $requisition->vendor_account_name,
-                    'account_number' => $requisition->vendor_account_number,
-                    'description' => 'Payment for Requisition: ' . Str::limit($requisition->justification, 50),
-                    'amount' => $amountToPayIDR
-                ]);
+            try {
+                DB::transaction(function () use ($requisition, $amountToPayIDR, $safeReason, $user) {
+                    $xenditSecretKey = env('XENDIT_SECRET_KEY');
+                    
+                    $response = Http::withBasicAuth($xenditSecretKey, '')
+                        ->post('https://api.xendit.co/disbursements', [
+                            'external_id' => 'req_' . $requisition->id . '_' . time(),
+                            'bank_code' => $requisition->vendor_bank_code,
+                            'account_holder_name' => $requisition->vendor_account_name,
+                            'account_number' => $requisition->vendor_account_number,
+                            'description' => 'Payment for Requisition: ' . Str::limit($requisition->justification, 50),
+                            'amount' => $amountToPayIDR
+                        ]);
 
-            if ($response->failed()) {
+                    if ($response->failed()) {
+                        throw new \Exception('Payment Gateway Error: ' . $response->json('message', 'Failed to process payment with Xendit.'));
+                    }
+
+                    $xenditData = $response->json();
+                    $requisition->xendit_disbursement_id = $xenditData['id'] ?? null;
+                    $requisition->amount_paid = ($requisition->amount_paid ?? 0) + $amountToPayIDR;
+                    $requisition->status = 'Processing Payment';
+                    $requisition->paid_by = $user->name;
+                    $requisition->paid_at = Carbon::now()->toIso8601String();
+                    
+                    if (!empty($safeReason)) {
+                        $requisition->reason = $safeReason;
+                    }
+                    
+                    $requisition->save();
+
+                    Notification::create([
+                        'user_id' => $requisition->user_id,
+                        'title' => 'Payment Initiated',
+                        'message' => 'Funds are currently being transferred to the vendor.',
+                        'type' => 'info',
+                        'link' => '/requisitions/' . $requisition->id,
+                        'is_read' => false
+                    ]);
+                });
+            } catch (\Exception $e) {
                 return response()->json([
-                    'message' => 'Payment Gateway Error: ' . $response->json('message', 'Failed to process payment with Xendit.')
+                    'message' => $e->getMessage()
                 ], 422);
             }
-
-            $xenditData = $response->json();
-            $requisition->xendit_disbursement_id = $xenditData['id'] ?? null;
-            $requisition->amount_paid = ($requisition->amount_paid ?? 0) + $amountToPayIDR;
-            $requisition->status = 'Processing Payment';
-            $requisition->paid_by = $user->name;
-            $requisition->paid_at = Carbon::now()->toIso8601String();
-            
-            if (!empty($safeReason)) {
-                $requisition->reason = $safeReason;
-            }
-            
-            $requisition->save();
-
-            Notification::create([
-                'user_id' => $requisition->user_id,
-                'title' => 'Payment Initiated',
-                'message' => 'Funds are currently being transferred to the vendor.',
-                'type' => 'info',
-                'link' => '/requisitions/' . $requisition->id,
-                'is_read' => false
-            ]);
 
             return response()->json($requisition);
         }
@@ -584,7 +715,7 @@ class RequisitionController extends Controller
         ]);
 
         $requisition = Requisition::findOrFail($id);
-        $requisition->invoice_attachment = $request->file('invoice')->store('invoices', 'public');
+        $requisition->invoice_attachment = $request->file('invoice')->store('invoices');
         $requisition->invoice_amount = (float) $request->input('invoice_amount');
         $requisition->vendor_bank_code = $request->input('vendor_bank_code');
         $requisition->vendor_account_number = $request->input('vendor_account_number');
