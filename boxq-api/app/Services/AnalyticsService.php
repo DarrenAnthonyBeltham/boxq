@@ -16,12 +16,17 @@ class AnalyticsService
 
         $allRequisitions = Requisition::select(
             'department', 'total_price', 'currency', 'exchange_rate', 
-            'status', 'created_at', 'paid_at', 'vendor_account_name', 'items'
+            'status', 'created_at', 'paid_at', 'vendor_account_name', 'items', '_id'
         )->get();
 
-        $allRequisitions->map(function ($req) {
+        $allRequisitions->transform(function ($req) {
             $rate = max((float) $req->exchange_rate, 1);
             $req->usd_value = $req->currency === 'IDR' ? ((float) $req->total_price / $rate) : (float) $req->total_price;
+            
+            if (is_string($req->items)) {
+                $req->items = json_decode($req->items, true);
+            }
+            
             return $req;
         });
 
@@ -130,7 +135,7 @@ class AnalyticsService
     {
         $bottlenecks = $requisitions->where('status', 'Paid')->map(function ($req) {
             if (!$req->paid_at) return null;
-            return Carbon::parse($req->paid_at)->diffInDays(Carbon::parse($req->created_at));
+            return Carbon::parse($req->created_at)->diffInDays(Carbon::parse($req->paid_at));
         })->filter(function($val) { return $val !== null; });
 
         return $bottlenecks->count() > 0 ? round($bottlenecks->average(), 1) : 0;
@@ -154,7 +159,7 @@ class AnalyticsService
                 $anomalies[] = [
                     'type' => 'Potential Duplicate',
                     'description' => 'Multiple requests from ' . $group->first()->department . ' with exact same total.',
-                    'requests' => $group->pluck('_id')
+                    'requests' => $group->map(function($req) { return (string) ($req->id ?? $req->_id); })->toArray()
                 ];
             }
         }

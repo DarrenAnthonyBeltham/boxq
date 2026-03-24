@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { useToast } from 'vue-toastification';
+import axios from 'axios';
 import api from '../../services/api';
 import MainLayout from '../../layouts/MainLayout.vue';
 import { Bar, Doughnut, Line } from 'vue-chartjs';
@@ -26,7 +28,10 @@ interface DashboardStats {
     anomalies: Anomaly[];
 }
 
+const toast = useToast();
 const loading = ref(true);
+const isExporting = ref(false);
+
 const stats = ref<DashboardStats>({
     total_spent_this_month_usd: 0,
     projected_total_month_spend: 0,
@@ -87,13 +92,15 @@ onMounted(async () => {
             doughnutChartData.value.datasets[0].data = Object.values(topItems);
         }
     } catch (error) {
-        console.error(error);
+        toast.error("Failed to load analytics data.");
     } finally {
         loading.value = false;
     }
 });
 
 const downloadCsv = async () => {
+    isExporting.value = true;
+    toast.info("Compiling financial CSV...");
     try {
         const response = await api.get('/analytics/export', { responseType: 'blob' });
         const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -103,8 +110,15 @@ const downloadCsv = async () => {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    } catch (error) {
-        alert("Failed to export data.");
+        toast.success("CSV Export Complete!");
+    } catch (error: unknown) {
+        if (axios.isAxiosError(error)) {
+            toast.error(error.response?.data?.message || "Failed to export data.");
+        } else {
+            toast.error("Failed to export data.");
+        }
+    } finally {
+        isExporting.value = false;
     }
 };
 
@@ -124,8 +138,9 @@ export default { name: 'AnalyticsDashboardView' }
                 <h3 class="fw-bold text-dark mb-0">Financial Intelligence</h3>
                 <p class="text-muted mb-0 small">Real-time spend analysis and anomaly detection.</p>
             </div>
-            <button @click="downloadCsv" class="btn btn-dark shadow-sm fw-bold">
-                <i class="fa-solid fa-file-csv me-2"></i>Export Full CSV
+            <button @click="downloadCsv" class="btn btn-dark shadow-sm fw-bold" :disabled="isExporting">
+                <span v-if="isExporting" class="spinner-border spinner-border-sm me-2"></span>
+                <i v-else class="fa-solid fa-file-csv me-2"></i>Export Full CSV
             </button>
         </div>
 

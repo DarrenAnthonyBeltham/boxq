@@ -22,9 +22,22 @@ class AnalyticsController extends Controller
         return response()->json($stats);
     }
 
-    public function auditLogs($id)
+    public function auditLogs(Request $request, $id)
     {
-        return response()->json(AuditLog::where('requisition_id', $id)->orderBy('created_at', 'desc')->get());
+        $user = $request->user();
+        $requisition = Requisition::findOrFail($id);
+
+        if (!in_array($user->role, ['admin', 'finance']) && $requisition->user_id !== $user->id) {
+            if (!($user->role === 'manager' && $requisition->department === $user->department)) {
+                return response()->json(['message' => 'Unauthorized'], 403);
+            }
+        }
+
+        $logs = AuditLog::where('requisition_id', $id)
+                        ->orderBy('created_at', 'desc')
+                        ->get();
+
+        return response()->json($logs);
     }
 
     public function exportCsv(Request $request)

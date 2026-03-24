@@ -6,6 +6,7 @@ use App\Models\Requisition;
 use App\Models\User;
 use App\Models\Budget;
 use App\Models\Notification;
+use App\Models\AuditLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
@@ -18,6 +19,18 @@ use Carbon\Carbon;
 
 class RequisitionController extends Controller
 {
+    private function logActivity($requisitionId, $user, $action, $ipAddress, $changes = null)
+    {
+        AuditLog::create([
+            'requisition_id' => (string) $requisitionId,
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'ip_address' => $ipAddress,
+            'action' => $action,
+            'changes' => $changes
+        ]);
+    }
+
     public function index(Request $request)
     {
         $user = $request->user();
@@ -179,6 +192,8 @@ class RequisitionController extends Controller
             'amount_paid' => 0
         ]);
 
+        $this->logActivity($requisition->id, $user, 'Created Requisition', $request->ip());
+
         if ($status !== 'Draft') {
             $this->dispatchNewRequisitionNotifications($requisition, $user);
         }
@@ -330,6 +345,8 @@ class RequisitionController extends Controller
                     ]);
         });
 
+        $this->logActivity($requisition->id, $user, 'Emailed PO to Vendor', $request->ip());
+
         Notification::create([
             'user_id' => $user->id,
             'title' => 'PO Sent to Vendor',
@@ -347,8 +364,8 @@ class RequisitionController extends Controller
         $user = $request->user();
         $requisition = Requisition::findOrFail($id);
 
-        if ($requisition->user_id !== $user->id || $requisition->status !== 'Draft') {
-            return response()->json(['message' => 'Unauthorized or not a draft'], 403);
+        if ($requisition->user_id !== $user->id && !in_array($user->role, ['manager', 'admin'])) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $isDraft = $request->input('status') === 'Draft';
@@ -438,9 +455,24 @@ class RequisitionController extends Controller
         $requisition->approval_stage = $approvalStage;
         $requisition->approval_token = $approvalToken;
         $requisition->is_over_budget = $isOverBudget;
+
+        $dirty = $requisition->getDirty();
+        $changes = [];
+        foreach ($dirty as $field => $newValue) {
+            if (in_array($field, ['updated_at', 'approval_token'])) continue;
+            $changes[$field] = [
+                'old' => $requisition->getOriginal($field),
+                'new' => $newValue
+            ];
+        }
+
         $requisition->save();
 
-        if ($status !== 'Draft') {
+        if (!empty($changes)) {
+            $this->logActivity($requisition->id, $user, 'Updated Requisition', $request->ip(), $changes);
+        }
+
+        if ($status !== 'Draft' && $requisition->getOriginal('status') === 'Draft') {
             $this->dispatchNewRequisitionNotifications($requisition, $user);
         }
 
@@ -483,6 +515,8 @@ class RequisitionController extends Controller
         $requisition->approval_token = null;
         $requisition->save();
 
+        $this->logActivity($requisition->id, $user, 'Recalled to Draft', $request->ip());
+
         return response()->json($requisition);
     }
 
@@ -515,6 +549,7 @@ class RequisitionController extends Controller
         
         $usdTotal = $requisition->currency === 'IDR' ? ($requisition->total_price / $requisition->exchange_rate) : $requisition->total_price;
         $safeReason = strip_tags($validated['reason'] ?? '');
+        $ip = $request->ip();
 
         if ($validated['status'] === 'Reconciled') {
             if (!in_array($user->role, ['finance', 'admin'])) {
@@ -524,6 +559,8 @@ class RequisitionController extends Controller
             $requisition->reconciled_by = $user->name;
             $requisition->reconciled_at = Carbon::now()->toIso8601String();
             $requisition->save();
+
+            $this->logActivity($requisition->id, $user, 'Reconciled Request', $ip);
 
             Notification::create([
                 'user_id' => $requisition->user_id,
@@ -543,6 +580,8 @@ class RequisitionController extends Controller
             $requisition->approval_token = null;
             $requisition->reason = $safeReason ?: 'Rejected by ' . $user->name;
             $requisition->save();
+
+            $this->logActivity($requisition->id, $user, 'Rejected Request', $ip, ['reason' => $requisition->reason]);
 
             Notification::create([
                 'user_id' => $requisition->user_id,
@@ -567,7 +606,7 @@ class RequisitionController extends Controller
             $amountToPayIDR = (int) round($request->input('payment_amount'));
 
             try {
-                DB::transaction(function () use ($requisition, $amountToPayIDR, $safeReason, $user) {
+                DB::transaction(function () use ($requisition, $amountToPayIDR, $safeReason, $user, $ip) {
                     $xenditSecretKey = env('XENDIT_SECRET_KEY');
                     
                     $response = Http::withBasicAuth($xenditSecretKey, '')
@@ -597,6 +636,8 @@ class RequisitionController extends Controller
                     
                     $requisition->save();
 
+                    $this->logActivity($requisition->id, $user, 'Initiated Payment', $ip, ['amount' => $amountToPayIDR]);
+
                     Notification::create([
                         'user_id' => $requisition->user_id,
                         'title' => 'Payment Initiated',
@@ -616,6 +657,8 @@ class RequisitionController extends Controller
         }
 
         if ($validated['status'] === 'Approved') {
+            $previousStage = $requisition->approval_stage;
+
             if ($requisition->approval_stage === 'Manager') {
                 if ($usdTotal > 5000) {
                     $requisition->approval_stage = 'VP';
@@ -667,6 +710,8 @@ class RequisitionController extends Controller
             }
 
             $requisition->save();
+
+            $this->logActivity($requisition->id, $user, 'Approved Request', $ip, ['stage' => $previousStage]);
 
             if ($requisition->approval_stage === 'Completed') {
                 Notification::create([
@@ -720,7 +765,20 @@ class RequisitionController extends Controller
         $requisition->vendor_bank_code = $request->input('vendor_bank_code');
         $requisition->vendor_account_number = $request->input('vendor_account_number');
         $requisition->vendor_account_name = $request->input('vendor_account_name');
+        
+        $dirty = $requisition->getDirty();
+        $changes = [];
+        foreach ($dirty as $field => $newValue) {
+            if ($field === 'updated_at') continue;
+            $changes[$field] = [
+                'old' => $requisition->getOriginal($field),
+                'new' => $newValue
+            ];
+        }
+
         $requisition->save();
+
+        $this->logActivity($requisition->id, $user, 'Uploaded Invoice', $request->ip(), $changes);
 
         return response()->json($requisition);
     }

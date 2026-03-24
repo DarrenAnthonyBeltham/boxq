@@ -8,7 +8,14 @@ import MainLayout from '../../layouts/MainLayout.vue';
 
 interface RequisitionItem { name: string; price: number; qty: number; }
 interface CostCenter { department: string; percentage: number; }
-interface AuditLog { id: string; user_name: string; action: string; created_at: string; }
+interface AuditLog { 
+    id: string; 
+    user_name: string; 
+    action: string; 
+    changes?: Record<string, { old: unknown; new: unknown }>; 
+    created_at: string; 
+    ip_address?: string;
+}
 interface Requisition {
     id: number; _id?: string; user_id: string; requester: string; department: string; justification: string;
     items: RequisitionItem[]; subtotal: number; has_tax: boolean; tax_amount: number; total_price: number;
@@ -155,6 +162,7 @@ const emailPoToVendor = async () => {
     try {
         await api.post(`/requisitions/${route.params.id}/send-po`);
         toast.success(`Purchase Order automatically emailed to ${requisition.value.vendor_email}`);
+        await fetchAuditLogs();
     } catch (error: unknown) {
         if (axios.isAxiosError(error)) {
             toast.error(error.response?.data?.message || "Failed to email vendor.");
@@ -276,6 +284,24 @@ const submitInvoice = async () => {
     }
 };
 
+const formatChanges = (changes?: Record<string, { old: unknown; new: unknown }>) => {
+    if (!changes || typeof changes !== 'object') return [];
+    
+    const formatted: { field: string, old: string, new: string }[] = [];
+    for (const [key, value] of Object.entries(changes)) {
+        if (key === 'items' || key === 'cost_centers') {
+            formatted.push({ field: key, old: 'Previous Array', new: 'Updated Array' });
+        } else {
+            formatted.push({ 
+                field: key, 
+                old: String(value.old ?? 'none'), 
+                new: String(value.new ?? 'none') 
+            });
+        }
+    }
+    return formatted;
+};
+
 const isApprovedMatch = computed(() => ['Approved', 'PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Reconciled'].includes(requisition.value?.status || ''));
 const isPOMatch = computed(() => ['PO Created', 'Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Reconciled'].includes(requisition.value?.status || ''));
 const isGRNMatch = computed(() => ['Received', 'Processing Payment', 'Partially Paid', 'Paid', 'Reconciled'].includes(requisition.value?.status || ''));
@@ -292,7 +318,7 @@ const getStatusBadge = (status: string) => {
     return map[status] || 'bg-warning text-dark';
 };
 
-const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 </script>
 
 <script lang="ts"> export default { name: 'RequisitionDetailView' } </script>
@@ -367,14 +393,23 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                 
                 <div class="card border-0 shadow-sm mb-4">
                     <div class="card-body p-4">
-                        <h6 class="fw-bold text-dark mb-4"><i class="fa-solid fa-clock-rotate-left me-2"></i>Immutable Audit Trail</h6>
+                        <h6 class="fw-bold text-dark mb-4"><i class="fa-solid fa-clock-rotate-left me-2"></i>SOC2 Audit Trail</h6>
                         <div v-if="auditLogs.length === 0" class="text-muted small">No activity recorded yet.</div>
                         <div v-else class="position-relative ms-2">
                             <div class="border-start border-2 position-absolute h-100" style="left: 6px; border-color: #e9ecef !important;"></div>
                             <div v-for="log in auditLogs" :key="log.id" class="position-relative mb-4 ps-4">
                                 <div class="position-absolute bg-primary rounded-circle" style="width: 14px; height: 14px; left: 0; top: 4px; border: 3px solid white;"></div>
                                 <div class="fw-bold text-dark small">{{ log.user_name }} <span class="badge bg-light text-secondary border ms-2">{{ log.action }}</span></div>
-                                <div class="text-muted" style="font-size: 0.75rem;">{{ formatDate(log.created_at) }}</div>
+                                <div class="text-muted mb-2" style="font-size: 0.75rem;">{{ formatDate(log.created_at) }} <span v-if="log.ip_address"> • IP: {{ log.ip_address }}</span></div>
+                                
+                                <div v-if="log.changes" class="bg-light p-2 rounded border small">
+                                    <div v-for="(change, idx) in formatChanges(log.changes)" :key="idx" class="d-flex align-items-center text-muted mb-1 last-mb-0" style="font-size: 0.7rem;">
+                                        <span class="fw-bold text-secondary text-uppercase me-2" style="width: 80px;">{{ change.field }}</span>
+                                        <span class="text-danger text-decoration-line-through me-2">{{ change.old }}</span>
+                                        <i class="fa-solid fa-arrow-right mx-2 text-secondary" style="font-size: 0.6rem;"></i>
+                                        <span class="text-success fw-bold">{{ change.new }}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -482,3 +517,9 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
         </div>
     </MainLayout>
 </template>
+
+<style scoped>
+.last-mb-0:last-child {
+    margin-bottom: 0 !important;
+}
+</style>
