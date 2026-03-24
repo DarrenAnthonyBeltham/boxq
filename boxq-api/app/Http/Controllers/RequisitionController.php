@@ -744,6 +744,43 @@ class RequisitionController extends Controller
         return response()->json($requisition);
     }
 
+    public function assignVendor(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!in_array($user->role, ['finance', 'admin'])) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'vendor_account_name' => 'required|string',
+            'vendor_email' => 'required|email',
+            'vendor_address' => 'nullable|string',
+            'vendor_tax_id' => 'nullable|string',
+            'vendor_payment_terms' => 'nullable|string'
+        ]);
+
+        $requisition = Requisition::findOrFail($id);
+
+        if ($requisition->status !== 'Approved') {
+            return response()->json(['message' => 'Requisition must be Approved before assigning a vendor.'], 422);
+        }
+
+        $requisition->vendor_account_name = $validated['vendor_account_name'];
+        $requisition->vendor_email = $validated['vendor_email'];
+        $requisition->vendor_address = $validated['vendor_address'] ?? 'N/A';
+        $requisition->vendor_tax_id = $validated['vendor_tax_id'] ?? 'N/A';
+        $requisition->vendor_payment_terms = $validated['vendor_payment_terms'] ?? 'N/A';
+        $requisition->status = 'PO Created';
+        
+        $requisition->save();
+
+        $this->logActivity($requisition->id, $user, 'Assigned Vendor & Generated PO', $request->ip(), [
+            'vendor_assigned' => ['old' => 'None', 'new' => $validated['vendor_account_name']]
+        ]);
+
+        return response()->json($requisition);
+    }
+
     public function uploadInvoice(Request $request, $id)
     {
         $user = $request->user();

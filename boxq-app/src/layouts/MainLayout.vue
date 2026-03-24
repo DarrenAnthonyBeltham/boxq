@@ -207,6 +207,13 @@ export default { name: 'MainLayout' }
 
                     <li v-if="['admin'].includes(currentUser.role)" class="nav-item mt-4">
                         <div class="px-3 mb-2 text-uppercase text-secondary small fw-bold" style="font-size: 0.7rem; letter-spacing: 1px;">Admin</div>
+                        <router-link to="/admin/users" class="nav-link rounded-3 px-3 py-2 d-flex align-items-center transition-all" :class="isPrefixActive('/admin/users') ? 'bg-primary text-white shadow-sm' : 'text-secondary text-opacity-75 hover-text-white'">
+                            <i class="fa-solid fa-users fs-5 me-3" style="width: 24px; text-align: center;"></i>
+                            <span class="fw-medium fs-6">Users</span>
+                        </router-link>
+                    </li>
+                    <li v-if="['admin'].includes(currentUser.role)" class="nav-item mt-4">
+                        <div class="px-3 mb-2 text-uppercase text-secondary small fw-bold" style="font-size: 0.7rem; letter-spacing: 1px;">Admin</div>
                         <router-link to="/admin/budgets" class="nav-link rounded-3 px-3 py-2 d-flex align-items-center transition-all" :class="isPrefixActive('/admin/budgets') ? 'bg-primary text-white shadow-sm' : 'text-secondary text-opacity-75 hover-text-white'">
                             <i class="fa-solid fa-wallet fs-5 me-3" style="width: 24px; text-align: center;"></i>
                             <span class="fw-medium fs-6">Budgets</span>

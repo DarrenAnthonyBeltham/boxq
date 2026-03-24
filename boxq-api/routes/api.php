@@ -9,6 +9,8 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\XenditWebhookController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\VendorPortalController;
+use App\Http\Controllers\UserController;
 use App\Http\Middleware\MongoAuthMiddleware;
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -24,7 +26,11 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
         return $request->user();
     });
 
-    Route::get('/users', [App\Http\Controllers\UserController::class, 'index']);
+    Route::get('/users', [UserController::class, 'index']);
+    Route::post('/users', [UserController::class, 'store']);
+    Route::put('/users/{id}', [UserController::class, 'update']);
+    Route::post('/user/delegate', [UserController::class, 'setDelegation']);
+    
     Route::put('/user/password', [ProfileController::class, 'updatePassword']);
     Route::post('/user/avatar', [ProfileController::class, 'uploadAvatar']);
     Route::put('/user/preferences', [ProfileController::class, 'updatePreferences']);
@@ -33,11 +39,16 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::post('/requisitions', [RequisitionController::class, 'store']);
     Route::get('/requisitions/{id}', [RequisitionController::class, 'show']);
     Route::patch('/requisitions/{id}/status', [RequisitionController::class, 'updateStatus']);
+    Route::post('/requisitions/{id}/assign-vendor', [RequisitionController::class, 'assignVendor']);
     Route::post('/requisitions/{id}/invoice', [RequisitionController::class, 'uploadInvoice']);
     Route::get('/requisitions/{id}/po', [RequisitionController::class, 'downloadPoPdf']);
     Route::post('/requisitions/{id}/send-po', [RequisitionController::class, 'sendPoToVendor']);
-    Route::post('/requisitions/{id}/recall', [RequisitionController::class, 'recall']);
     Route::get('/requisitions/{id}/file/{type}', [RequisitionController::class, 'downloadFile']);
+    Route::post('/requisitions/{id}/recall', [RequisitionController::class, 'recall']);
+
+    Route::get('/vendor-portal/orders', [VendorPortalController::class, 'index']);
+    Route::get('/vendor-portal/orders/{id}', [VendorPortalController::class, 'show']);
+    Route::post('/vendor-portal/orders/{id}/invoice', [VendorPortalController::class, 'uploadInvoice']);
 
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications/read', [NotificationController::class, 'markAsRead']);
@@ -45,8 +56,6 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::get('/budgets', [App\Http\Controllers\BudgetController::class, 'index']);
     Route::get('/budget/current', [App\Http\Controllers\BudgetController::class, 'current']);
     Route::post('/budgets', [App\Http\Controllers\BudgetController::class, 'store']);
-    
-    Route::post('/user/delegate', [App\Http\Controllers\UserController::class, 'setDelegation']);
 
     Route::get('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'index']);
     Route::post('/grn', [App\Http\Controllers\GoodsReceiptController::class, 'store']);

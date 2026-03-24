@@ -12,10 +12,11 @@ interface AuditLog {
     id: string; 
     user_name: string; 
     action: string; 
-    changes?: Record<string, { old: unknown; new: unknown }>; 
+    changes?: Record<string, Record<string, unknown>>; 
     created_at: string; 
     ip_address?: string;
 }
+interface Vendor { _id?: string; id?: string | number; name: string; email: string; address?: string; tax_id?: string; terms?: string; }
 interface Requisition {
     id: number; _id?: string; user_id: string; requester: string; department: string; justification: string;
     items: RequisitionItem[]; subtotal: number; has_tax: boolean; tax_amount: number; total_price: number;
@@ -30,6 +31,7 @@ const router = useRouter();
 const toast = useToast();
 const requisition = ref<Requisition | null>(null);
 const auditLogs = ref<AuditLog[]>([]);
+const vendors = ref<Vendor[]>([]);
 const loading = ref(true);
 const currentUser = ref({ id: '', _id: '', role: '', department: '' });
 
@@ -40,6 +42,7 @@ const isDownloading = ref(false);
 const isDownloadingFile = ref(false);
 const showRejectInput = ref(false);
 const rejectReason = ref('');
+const selectedVendorId = ref<string | number>('');
 const invoiceFile = ref<File | null>(null);
 const invoiceAmountInput = ref<number | null>(null);
 const bankCodeInput = ref('');
@@ -49,6 +52,27 @@ const isUploadingInvoice = ref(false);
 const paymentNotes = ref('');
 const partialPaymentAmount = ref<number | null>(null);
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
+
+const auditLogPage = ref(1);
+const auditLogsPerPage = 5;
+
+const paginatedAuditLogs = computed(() => {
+    const start = (auditLogPage.value - 1) * auditLogsPerPage;
+    const end = start + auditLogsPerPage;
+    return auditLogs.value.slice(start, end);
+});
+
+const totalAuditLogPages = computed(() => {
+    return Math.ceil(auditLogs.value.length / auditLogsPerPage);
+});
+
+const prevLogPage = () => {
+    if (auditLogPage.value > 1) auditLogPage.value--;
+};
+
+const nextLogPage = () => {
+    if (auditLogPage.value < totalAuditLogPages.value) auditLogPage.value++;
+};
 
 const indonesianBanks = [
     { code: 'BCA', name: 'Bank Central Asia (BCA)' }, { code: 'MANDIRI', name: 'Bank Mandiri' },
@@ -61,11 +85,21 @@ onMounted(async () => {
     if (userData) currentUser.value = JSON.parse(userData);
     await fetchRequisition();
     await fetchAuditLogs();
+    if (['finance', 'admin'].includes(currentUser.value.role)) {
+        await fetchVendors();
+    }
 });
 
 onUnmounted(() => {
     if (pollingInterval) clearInterval(pollingInterval);
 });
+
+const fetchVendors = async () => {
+    try {
+        const response = await api.get('/vendors');
+        vendors.value = response.data.data || response.data;
+    } catch (error) {}
+};
 
 const fetchRequisition = async () => {
     try {
@@ -99,6 +133,30 @@ const fetchAuditLogs = async () => {
 
 const cloneRequest = () => {
     if (requisition.value) router.push(`/create?clone_id=${requisition.value._id || requisition.value.id}`);
+};
+
+const assignVendorAndCreatePo = async () => {
+    const vendor = vendors.value.find(v => (v._id || v.id) === selectedVendorId.value);
+    if (!vendor) return;
+
+    isProcessing.value = true;
+    try {
+        await api.post(`/requisitions/${route.params.id}/assign-vendor`, {
+            vendor_account_name: vendor.name,
+            vendor_email: vendor.email,
+            vendor_address: vendor.address,
+            vendor_tax_id: vendor.tax_id,
+            vendor_payment_terms: vendor.terms
+        });
+        toast.success("Vendor assigned and PO generated successfully!");
+        await fetchRequisition();
+        await fetchAuditLogs();
+        auditLogPage.value = 1;
+    } catch (error: unknown) {
+        toast.error("Failed to assign vendor.");
+    } finally {
+        isProcessing.value = false;
+    }
 };
 
 const downloadSecureFile = async (type: string) => {
@@ -163,6 +221,7 @@ const emailPoToVendor = async () => {
         await api.post(`/requisitions/${route.params.id}/send-po`);
         toast.success(`Purchase Order automatically emailed to ${requisition.value.vendor_email}`);
         await fetchAuditLogs();
+        auditLogPage.value = 1;
     } catch (error: unknown) {
         if (axios.isAxiosError(error)) {
             toast.error(error.response?.data?.message || "Failed to email vendor.");
@@ -206,11 +265,7 @@ const recallRequest = async () => {
         toast.success("Request recalled successfully.");
         router.push('/create?clone_id=' + route.params.id);
     } catch (error: unknown) {
-        if (axios.isAxiosError(error)) {
-            toast.error(error.response?.data?.message || "Failed to recall request.");
-        } else {
-            toast.error("Failed to recall request.");
-        }
+        toast.error("Failed to recall request.");
         isRecalling.value = false;
     }
 };
@@ -241,13 +296,10 @@ const updateStatus = async (newStatus: string) => {
         toast.success(`Requisition marked as ${newStatus}`);
         await fetchRequisition();
         await fetchAuditLogs();
+        auditLogPage.value = 1;
         showRejectInput.value = false; rejectReason.value = ''; paymentNotes.value = '';
     } catch (error: unknown) {
-        if (axios.isAxiosError(error)) {
-            toast.error(error.response?.data?.message || "Failed to update status.");
-        } else {
-            toast.error("Failed to update status.");
-        }
+        toast.error("Failed to update status.");
     } finally {
         isProcessing.value = false;
     }
@@ -275,6 +327,7 @@ const submitInvoice = async () => {
         toast.success("Invoice and Vendor Bank details locked successfully!");
         await fetchRequisition();
         await fetchAuditLogs();
+        auditLogPage.value = 1;
         invoiceFile.value = null; invoiceAmountInput.value = null; bankCodeInput.value = ''; accountNumberInput.value = ''; accountNameInput.value = '';
         const fileInput = document.getElementById('invoiceUpload') as HTMLInputElement; if (fileInput) fileInput.value = '';
     } catch (error) {
@@ -284,18 +337,19 @@ const submitInvoice = async () => {
     }
 };
 
-const formatChanges = (changes?: Record<string, { old: unknown; new: unknown }>) => {
+const formatChanges = (changes?: Record<string, Record<string, unknown>> | null) => {
     if (!changes || typeof changes !== 'object') return [];
     
     const formatted: { field: string, old: string, new: string }[] = [];
-    for (const [key, value] of Object.entries(changes)) {
+    for (const key in changes) {
+        const val = changes[key];
         if (key === 'items' || key === 'cost_centers') {
             formatted.push({ field: key, old: 'Previous Array', new: 'Updated Array' });
         } else {
             formatted.push({ 
                 field: key, 
-                old: String(value.old ?? 'none'), 
-                new: String(value.new ?? 'none') 
+                old: String(val?.old ?? 'none'), 
+                new: String(val?.new ?? 'none') 
             });
         }
     }
@@ -321,7 +375,7 @@ const getStatusBadge = (status: string) => {
 const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 </script>
 
-<script lang="ts"> export default { name: 'RequisitionDetailView' } </script>
+<script lang="ts"> export default { name: 'RequisitionDetail' } </script>
 
 <template>
     <MainLayout>
@@ -397,7 +451,8 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                         <div v-if="auditLogs.length === 0" class="text-muted small">No activity recorded yet.</div>
                         <div v-else class="position-relative ms-2">
                             <div class="border-start border-2 position-absolute h-100" style="left: 6px; border-color: #e9ecef !important;"></div>
-                            <div v-for="log in auditLogs" :key="log.id" class="position-relative mb-4 ps-4">
+                            
+                            <div v-for="log in paginatedAuditLogs" :key="log.id" class="position-relative mb-4 ps-4">
                                 <div class="position-absolute bg-primary rounded-circle" style="width: 14px; height: 14px; left: 0; top: 4px; border: 3px solid white;"></div>
                                 <div class="fw-bold text-dark small">{{ log.user_name }} <span class="badge bg-light text-secondary border ms-2">{{ log.action }}</span></div>
                                 <div class="text-muted mb-2" style="font-size: 0.75rem;">{{ formatDate(log.created_at) }} <span v-if="log.ip_address"> • IP: {{ log.ip_address }}</span></div>
@@ -405,18 +460,45 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                                 <div v-if="log.changes" class="bg-light p-2 rounded border small">
                                     <div v-for="(change, idx) in formatChanges(log.changes)" :key="idx" class="d-flex align-items-center text-muted mb-1 last-mb-0" style="font-size: 0.7rem;">
                                         <span class="fw-bold text-secondary text-uppercase me-2" style="width: 80px;">{{ change.field }}</span>
-                                        <span class="text-danger text-decoration-line-through me-2">{{ change.old }}</span>
+                                        <span class="text-danger text-decoration-line-through me-2 text-truncate" style="max-width: 120px;">{{ change.old }}</span>
                                         <i class="fa-solid fa-arrow-right mx-2 text-secondary" style="font-size: 0.6rem;"></i>
-                                        <span class="text-success fw-bold">{{ change.new }}</span>
+                                        <span class="text-success fw-bold text-truncate" style="max-width: 120px;">{{ change.new }}</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
+
+                        <div v-if="totalAuditLogPages > 1" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
+                            <span class="small text-muted">Page <strong>{{ auditLogPage }}</strong> of {{ totalAuditLogPages }}</span>
+                            <div class="btn-group shadow-sm">
+                                <button @click="prevLogPage" class="btn btn-light border btn-sm" :disabled="auditLogPage === 1"><i class="fa-solid fa-chevron-left"></i></button>
+                                <button @click="nextLogPage" class="btn btn-light border btn-sm" :disabled="auditLogPage === totalAuditLogPages"><i class="fa-solid fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>
 
             <div class="col-lg-4">
+                
+                <div v-if="requisition.status === 'Approved' && ['finance', 'admin'].includes(currentUser.role)" class="card border-0 shadow-sm mb-4 border-top border-dark border-3 bg-light">
+                    <div class="card-body p-4">
+                        <h6 class="fw-bold text-dark mb-2"><i class="fa-solid fa-building-circle-check me-2"></i>Assign Vendor & Generate PO</h6>
+                        <p class="small text-muted mb-3">Select an approved vendor from the directory to fulfill this request. This will officially create the Purchase Order.</p>
+                        
+                        <select v-model="selectedVendorId" class="form-select mb-3 shadow-sm border-0">
+                            <option value="" disabled>Select an Approved Vendor...</option>
+                            <option v-for="v in vendors" :key="v._id || v.id" :value="v._id || v.id">{{ v.name }} ({{ v.email }})</option>
+                        </select>
+                        
+                        <button @click="assignVendorAndCreatePo" class="btn btn-dark w-100 fw-bold shadow-sm" :disabled="!selectedVendorId || isProcessing">
+                            <span v-if="isProcessing" class="spinner-border spinner-border-sm me-2"></span>
+                            <span v-else><i class="fa-solid fa-file-contract me-2"></i> Lock Vendor & Create PO</span>
+                        </button>
+                    </div>
+                </div>
+
                 <div v-if="canApprove" class="card border-0 shadow-sm mb-4 border-top border-primary border-3">
                     <div class="card-body p-4">
                         <h6 class="fw-bold mb-3">{{ requisition.approval_stage }} Action Required</h6>
@@ -468,7 +550,7 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                             <div class="bg-light rounded p-3 mb-4">
                                 <h6 class="text-uppercase small fw-bold text-secondary mb-3">The 3-Way Match</h6>
                                 <div class="d-flex align-items-center mb-2" :class="isApprovedMatch ? 'text-success' : 'text-muted'"><i class="fa-solid me-3 fs-5" :class="isApprovedMatch ? 'fa-circle-check' : 'fa-circle'"></i><div><div class="fw-bold small">Requisition Approved</div><div class="small opacity-75" style="font-size: 0.75rem;">Authorized by Management</div></div></div>
-                                <div class="d-flex align-items-center mb-2" :class="isPOMatch ? 'text-success' : 'text-muted'"><i class="fa-solid me-3 fs-5" :class="isPOMatch ? 'fa-circle-check' : 'fa-circle'"></i><div><div class="fw-bold small">Purchase Order Created</div><div class="small opacity-75" style="font-size: 0.75rem;">Sent to Vendor</div></div></div>
+                                <div class="d-flex align-items-center mb-2" :class="isPOMatch ? 'text-success' : 'text-muted'"><i class="fa-solid me-3 fs-5" :class="isPOMatch ? 'fa-circle-check' : 'fa-circle'"></i><div><div class="fw-bold small">Purchase Order Created</div><div class="small opacity-75" style="font-size: 0.75rem;">Assigned to Vendor</div></div></div>
                                 <div class="d-flex align-items-center" :class="isGRNMatch ? 'text-success' : 'text-muted'"><i class="fa-solid me-3 fs-5" :class="isGRNMatch ? 'fa-circle-check' : 'fa-circle'"></i><div><div class="fw-bold small">Goods Received Note (GRN)</div><div class="small opacity-75" style="font-size: 0.75rem;">Items confirmed on-site</div></div></div>
                             </div>
 
@@ -517,7 +599,6 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
         </div>
     </MainLayout>
 </template>
-
 <style scoped>
 .last-mb-0:last-child {
     margin-bottom: 0 !important;

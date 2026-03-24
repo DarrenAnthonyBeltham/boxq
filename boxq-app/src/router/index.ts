@@ -9,6 +9,7 @@ const Profile = () => import('../views/settings/Profile.vue');
 const ProductList = () => import('../views/catalog/ProductList.vue');
 const ProductManagement = () => import('../views/admin/ProductManagement.vue');
 const AccountSettings = () => import('../views/procurement/AccountSettings.vue');
+const VendorDashboard = () => import('../views/vendor/VendorDashboard.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -92,21 +93,54 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/admin/users',
+      name: 'user-management',
+      component: () => import('../views/admin/UserManagementView.vue'),
+      meta: { requiresAuth: true, roles: ['admin'] }
+    },
+    {
       path: '/analytics',
       name: 'analytics',
       component: () => import('../views/analytics/AnalyticsDashboardView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/vendor/dashboard',
+      name: 'vendor-dashboard',
+      component: VendorDashboard,
+      meta: { requiresAuth: true, roles: ['vendor'] }
     }
   ]
 });
 
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token');
+  const userStr = localStorage.getItem('user');
+  let userRole = '';
+  
+  if (userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      userRole = user.role || '';
+    } catch (e) {}
+  }
 
   if (to.meta.requiresAuth && !token) {
     next('/login');
   } else if (to.meta.guest && token) {
-    next('/');
+    if (userRole === 'vendor') {
+        next('/vendor/dashboard');
+    } else {
+        next('/');
+    }
+  } else if (token) {
+    if (userRole === 'vendor' && !to.path.startsWith('/vendor')) {
+        next('/vendor/dashboard');
+    } else if (userRole !== 'vendor' && to.path.startsWith('/vendor')) {
+        next('/');
+    } else {
+        next();
+    }
   } else {
     next();
   }
