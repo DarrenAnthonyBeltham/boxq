@@ -134,9 +134,9 @@ router.beforeEach((to, from, next) => {
         next('/');
     }
   } else if (token) {
-    if (userRole === 'vendor' && !to.path.startsWith('/vendor')) {
+    if (userRole === 'vendor' && !to.path.startsWith('/vendor/')) {
         next('/vendor/dashboard');
-    } else if (userRole !== 'vendor' && to.path.startsWith('/vendor')) {
+    } else if (userRole !== 'vendor' && to.path.startsWith('/vendor/')) {
         next('/');
     } else {
         next();

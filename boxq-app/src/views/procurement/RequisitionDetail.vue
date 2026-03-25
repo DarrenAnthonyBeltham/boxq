@@ -49,6 +49,7 @@ const bankCodeInput = ref('');
 const accountNumberInput = ref('');
 const accountNameInput = ref('');
 const isUploadingInvoice = ref(false);
+const isAiScanning = ref(false);
 const paymentNotes = ref('');
 const partialPaymentAmount = ref<number | null>(null);
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -305,9 +306,32 @@ const updateStatus = async (newStatus: string) => {
     }
 };
 
-const handleInvoiceSelect = (event: Event) => {
+const handleInvoiceSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement;
     invoiceFile.value = target.files?.[0] || null;
+
+    if (!invoiceFile.value) return;
+
+    isAiScanning.value = true;
+    toast.info("AI is analyzing the document...");
+
+    try {
+        const formData = new FormData();
+        formData.append('invoice', invoiceFile.value);
+
+        const response = await api.post('/ocr/scan-invoice', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+
+        if (response.data.amount) invoiceAmountInput.value = response.data.amount;
+        if (response.data.vendor_name) accountNameInput.value = response.data.vendor_name;
+
+        toast.success("AI extraction successful!");
+    } catch (error) {
+        toast.warning("AI couldn't read this document. Please enter details manually.");
+    } finally {
+        isAiScanning.value = false;
+    }
 };
 
 const submitInvoice = async () => {
@@ -574,7 +598,21 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
                                     <div class="input-group input-group-sm"><span class="input-group-text bg-light text-muted fw-bold" style="width: 140px;">Bank Code</span><select v-model="bankCodeInput" class="form-select"><option value="" disabled>Select Bank...</option><option v-for="bank in indonesianBanks" :key="bank.code" :value="bank.code">{{ bank.name }}</option></select></div>
                                     <div class="input-group input-group-sm"><span class="input-group-text bg-light text-muted fw-bold" style="width: 140px;">Account Num</span><input type="text" v-model="accountNumberInput" class="form-control" placeholder="e.g. 1234567890"></div>
                                     <div class="input-group input-group-sm"><span class="input-group-text bg-light text-muted fw-bold" style="width: 140px;">Account Name</span><input type="text" v-model="accountNameInput" class="form-control" placeholder="Vendor Entity Name"></div>
-                                    <div class="input-group input-group-sm mt-2"><input type="file" id="invoiceUpload" @change="handleInvoiceSelect" class="form-control" accept=".pdf,.jpg,.png"><button @click="submitInvoice" class="btn btn-dark" type="button" :disabled="!invoiceFile || !invoiceAmountInput || !bankCodeInput || !accountNumberInput || !accountNameInput || isUploadingInvoice"><span v-if="isUploadingInvoice" class="spinner-border spinner-border-sm" role="status"></span><span v-else>Upload & Lock</span></button></div>
+                                    
+                                    <div class="input-group input-group-sm mt-2 position-relative">
+                                        <input type="file" id="invoiceUpload" @change="handleInvoiceSelect" class="form-control" accept=".pdf,.jpg,.png" :disabled="isAiScanning">
+                                        
+                                        <button @click="submitInvoice" class="btn btn-dark" type="button" :disabled="!invoiceFile || !invoiceAmountInput || !bankCodeInput || !accountNumberInput || !accountNameInput || isUploadingInvoice || isAiScanning">
+                                            <span v-if="isUploadingInvoice" class="spinner-border spinner-border-sm" role="status"></span>
+                                            <span v-else>Upload & Lock</span>
+                                        </button>
+
+                                        <div v-if="isAiScanning" class="position-absolute start-0 top-0 w-100 h-100 bg-white bg-opacity-75 d-flex align-items-center justify-content-center z-1" style="border-radius: 4px;">
+                                            <span class="spinner-grow spinner-grow-sm text-primary me-2"></span>
+                                            <span class="small fw-bold text-primary">AI Analyzing Document...</span>
+                                        </div>
+                                    </div>
+
                                 </div>
                             </div>
 

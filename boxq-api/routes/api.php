@@ -11,13 +11,14 @@ use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\VendorPortalController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\OcrController;
 use App\Http\Middleware\MongoAuthMiddleware;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::get('/requisitions/{id}/email-approval', [RequisitionController::class, 'emailApproval']);
 
-Route::post('/webhooks/xendit', [XenditWebhookController::class, 'handleDisbursement']);
+Route::any('/webhooks/xendit', [XenditWebhookController::class, 'handleDisbursement']);
 
 Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -45,6 +46,8 @@ Route::middleware([MongoAuthMiddleware::class])->group(function () {
     Route::post('/requisitions/{id}/send-po', [RequisitionController::class, 'sendPoToVendor']);
     Route::get('/requisitions/{id}/file/{type}', [RequisitionController::class, 'downloadFile']);
     Route::post('/requisitions/{id}/recall', [RequisitionController::class, 'recall']);
+
+    Route::post('/ocr/scan-invoice', [OcrController::class, 'scanInvoice']);
 
     Route::get('/vendor-portal/orders', [VendorPortalController::class, 'index']);
     Route::get('/vendor-portal/orders/{id}', [VendorPortalController::class, 'show']);
